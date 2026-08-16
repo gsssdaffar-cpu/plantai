@@ -21,3 +21,6 @@ tomato.jpeg
 .idea/
 
 *.pyproj
+models/plant_model.pth
+models/plant_model_15class_backup.pth
+models/plant_model_38class_old.pth
