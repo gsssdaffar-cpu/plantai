@@ -1,4 +1,5 @@
 ﻿import os
+import time
 
 from flask import (
     Flask,
@@ -9,13 +10,7 @@ from flask import (
 
 from werkzeug.utils import secure_filename
 
-from PIL import Image
-
-from predict import (
-    predict_image,
-    get_model,
-    get_transform
-)
+from predict import predict_image
 
 from disease_lookup import get_disease
 
@@ -25,8 +20,6 @@ from history import (
     dashboard_stats,
     recent_predictions
 )
-
-from gradcam import create_gradcam
 
 from severity import estimate_severity
 
@@ -54,14 +47,29 @@ app = Flask(__name__)
 # DATABASE
 # ============================================================
 
-create_tables()
+try:
+
+    create_tables()
+
+    print("Database tables initialized.")
+
+except Exception as e:
+
+    print("Database initialization error:", e)
 
 
 # ============================================================
-# UPLOAD CONFIGURATION
+# PATH CONFIGURATION
 # ============================================================
 
-UPLOAD_FOLDER = "uploads"
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+UPLOAD_FOLDER = os.path.join(
+    BASE_DIR,
+    "uploads"
+)
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
@@ -78,14 +86,42 @@ os.makedirs(
 @app.route("/")
 def home():
 
-    stats = dashboard_stats()
+    try:
 
-    recent = recent_predictions()
+        stats = dashboard_stats()
+
+    except Exception as e:
+
+        print(
+            "Dashboard stats error:",
+            e
+        )
+
+        stats = {}
+
+
+    try:
+
+        recent = recent_predictions()
+
+    except Exception as e:
+
+        print(
+            "Recent predictions error:",
+            e
+        )
+
+        recent = []
+
 
     return render_template(
+
         "index.html",
+
         stats=stats,
+
         recent=recent
+
     )
 
 
@@ -108,15 +144,34 @@ def chatbot():
             ""
         ).strip()
 
+
         if question:
 
-            answer = chatbot_response(
-                question
-            )
+            try:
+
+                answer = chatbot_response(
+                    question
+                )
+
+            except Exception as e:
+
+                print(
+                    "Chatbot error:",
+                    e
+                )
+
+                answer = (
+                    "Sorry, chatbot is "
+                    "currently unavailable."
+                )
+
 
     return render_template(
+
         "chatbot.html",
+
         answer=answer
+
     )
 
 
@@ -134,9 +189,6 @@ def upload_page():
 
 # ============================================================
 # WEB UPLOAD + AI DIAGNOSIS
-#
-# THIS IS YOUR EXISTING STABLE WEB ROUTE.
-# DO NOT CHANGE ITS BEHAVIOR.
 # ============================================================
 
 @app.route(
@@ -145,13 +197,25 @@ def upload_page():
 )
 def upload():
 
-    # --------------------------------------------------------
-    # Check uploaded file
-    # --------------------------------------------------------
+    request_start = time.time()
+
+    print()
+    print("=" * 60)
+    print("WEB UPLOAD REQUEST STARTED")
+    print("=" * 60)
+
+
+    # ========================================================
+    # CHECK FILE
+    # ========================================================
 
     if "image" not in request.files:
 
-        return "No image uploaded."
+        print(
+            "ERROR: No image uploaded."
+        )
+
+        return "No image uploaded.", 400
 
 
     file = request.files["image"]
@@ -159,12 +223,16 @@ def upload():
 
     if file.filename == "":
 
-        return "No file selected."
+        print(
+            "ERROR: No file selected."
+        )
+
+        return "No file selected.", 400
 
 
-    # --------------------------------------------------------
-    # Secure filename
-    # --------------------------------------------------------
+    # ========================================================
+    # SECURE FILENAME
+    # ========================================================
 
     filename = secure_filename(
         file.filename
@@ -173,12 +241,16 @@ def upload():
 
     if not filename:
 
-        return "Invalid file name."
+        print(
+            "ERROR: Invalid filename."
+        )
+
+        return "Invalid file name.", 400
 
 
-    # --------------------------------------------------------
-    # Save uploaded image
-    # --------------------------------------------------------
+    # ========================================================
+    # SAVE IMAGE
+    # ========================================================
 
     filepath = os.path.join(
 
@@ -189,27 +261,35 @@ def upload():
     )
 
 
-    file.save(
+    try:
+
+        file.save(
+            filepath
+        )
+
+    except Exception as e:
+
+        print(
+            "File save error:",
+            e
+        )
+
+        return "Could not save image.", 500
+
+
+    print(
+        "Image saved:",
         filepath
     )
 
 
-    # ========================================================
-    # FILENAMES
-    # ========================================================
-
-    gradcam_name = (
-        "gradcam_"
-        + filename
-    )
-
-
-    gradcam_path = os.path.join(
-
-        app.config["UPLOAD_FOLDER"],
-
-        gradcam_name
-
+    print(
+        "Upload save time:",
+        round(
+            time.time() - request_start,
+            2
+        ),
+        "seconds"
     )
 
 
@@ -217,13 +297,34 @@ def upload():
     # AI PREDICTION
     # ========================================================
 
-    prediction, confidence, top_predictions, confidence_status = (
-        predict_image(
+    prediction_start = time.time()
+
+
+    try:
+
+        (
+            prediction,
+            confidence,
+            top_predictions,
+            confidence_status
+        ) = predict_image(
             filepath
         )
-    )
+
+    except Exception as e:
+
+        print(
+            "Prediction error:",
+            e
+        )
+
+        return (
+            "AI prediction failed.",
+            500
+        )
 
 
+    print()
     print(
         "===================================="
     )
@@ -243,45 +344,34 @@ def upload():
     )
 
     print(
+        "Prediction time:",
+        round(
+            time.time() - prediction_start,
+            2
+        ),
+        "seconds"
+    )
+
+    print(
         "===================================="
     )
 
 
     # ========================================================
-    # LOAD IMAGE
+    # GRAD-CAM
+    #
+    # DISABLED FOR RENDER
+    #
+    # Grad-CAM performs additional neural-network operations
+    # and was causing the Render worker to timeout / run out
+    # of memory.
     # ========================================================
 
-    image = Image.open(
-        filepath
-    ).convert(
-        "RGB"
+    gradcam_name = None
+
+    print(
+        "Grad-CAM skipped."
     )
-
-
-    # ========================================================
-    # IMAGE TRANSFORM
-    # ========================================================
-
-    tensor = get_transform()(
-        image
-    )
-
-
-    tensor = tensor.unsqueeze(
-        0
-    )
-
-
-    # ========================================================
-# GRAD-CAM
-# ========================================================
-
-# Disabled on Render to prevent CPU/RAM timeout.
-# Prediction does not depend on Grad-CAM.
-
-gradcam_name = None
-
-print("Grad-CAM skipped")
 
 
     # ========================================================
@@ -289,6 +379,10 @@ print("Grad-CAM skipped")
     # ========================================================
 
     if confidence < 40:
+
+        print(
+            "Low confidence prediction."
+        )
 
         return render_template(
 
@@ -344,28 +438,61 @@ print("Grad-CAM skipped")
         }
 
 
+    print(
+        "Disease lookup completed in",
+        round(
+            time.time() - request_start,
+            2
+        ),
+        "seconds"
+    )
+
+
     # ========================================================
     # SEVERITY ANALYSIS
     # ========================================================
 
-    severity = estimate_severity(
-        filepath
-    )
+    severity_start = time.time()
 
 
-    severity_level = (
-        severity.get(
+    try:
+
+        severity = estimate_severity(
+            filepath
+        )
+
+
+        severity_level = severity.get(
             "level",
             "Unknown"
         )
-    )
 
 
-    affected_area = (
-        severity.get(
+        affected_area = severity.get(
             "area",
             0
         )
+
+
+    except Exception as e:
+
+        print(
+            "Severity error:",
+            e
+        )
+
+        severity_level = "Unknown"
+
+        affected_area = 0
+
+
+    print(
+        "Severity completed in",
+        round(
+            time.time() - severity_start,
+            2
+        ),
+        "seconds"
     )
 
 
@@ -373,16 +500,40 @@ print("Grad-CAM skipped")
     # AI EXPLANATION
     # ========================================================
 
-    explanation = generate_explanation(
+    explanation_start = time.time()
 
-        info,
 
-        confidence,
+    try:
 
-        severity_level,
+        explanation = generate_explanation(
 
-        affected_area
+            info,
 
+            confidence,
+
+            severity_level,
+
+            affected_area
+
+        )
+
+    except Exception as e:
+
+        print(
+            "Explanation error:",
+            e
+        )
+
+        explanation = ""
+
+
+    print(
+        "Explanation completed in",
+        round(
+            time.time() - explanation_start,
+            2
+        ),
+        "seconds"
     )
 
 
@@ -390,11 +541,20 @@ print("Grad-CAM skipped")
     # SEVERITY ADVICE
     # ========================================================
 
-    severity_advice = (
-        get_severity_advice(
+    try:
+
+        severity_advice = get_severity_advice(
             severity_level
         )
-    )
+
+    except Exception as e:
+
+        print(
+            "Severity advice error:",
+            e
+        )
+
+        severity_advice = ""
 
 
     # ========================================================
@@ -414,6 +574,9 @@ print("Grad-CAM skipped")
         highlight_name
 
     )
+
+
+    highlight_start = time.time()
 
 
     try:
@@ -436,6 +599,16 @@ print("Grad-CAM skipped")
         highlight_name = None
 
 
+    print(
+        "Highlight completed in",
+        round(
+            time.time() - highlight_start,
+            2
+        ),
+        "seconds"
+    )
+
+
     # ========================================================
     # SAVE HISTORY
     # ========================================================
@@ -456,6 +629,10 @@ print("Grad-CAM skipped")
 
             affected_area
 
+        )
+
+        print(
+            "Prediction history saved."
         )
 
     except Exception as e:
@@ -482,6 +659,9 @@ print("Grad-CAM skipped")
         report_name
 
     )
+
+
+    report_start = time.time()
 
 
     try:
@@ -520,6 +700,36 @@ print("Grad-CAM skipped")
         )
 
         report_name = None
+
+
+    print(
+        "PDF generation completed in",
+        round(
+            time.time() - report_start,
+            2
+        ),
+        "seconds"
+    )
+
+
+    # ========================================================
+    # TOTAL PROCESSING TIME
+    # ========================================================
+
+    total_time = round(
+        time.time() - request_start,
+        2
+    )
+
+
+    print()
+    print("=" * 60)
+    print(
+        "TOTAL WEB REQUEST TIME:",
+        total_time,
+        "seconds"
+    )
+    print("=" * 60)
 
 
     # ========================================================
@@ -563,11 +773,7 @@ print("Grad-CAM skipped")
 # ============================================================
 # MOBILE API
 #
-# NEW ENDPOINT
-#
 # POST /api/predict
-#
-# This does NOT replace /upload.
 # ============================================================
 
 @app.route(
@@ -576,19 +782,23 @@ print("Grad-CAM skipped")
 )
 def api_predict():
 
+    request_start = time.time()
+
     print()
     print("=" * 60)
-    print("🌱 MOBILE API REQUEST")
+    print("MOBILE API REQUEST")
     print("=" * 60)
 
 
-    # --------------------------------------------------------
-    # Check image
-    # --------------------------------------------------------
+    # ========================================================
+    # CHECK IMAGE
+    # ========================================================
 
     if "image" not in request.files:
 
-        print("ERROR: No image uploaded")
+        print(
+            "ERROR: No image uploaded."
+        )
 
         return {
 
@@ -602,13 +812,11 @@ def api_predict():
     file = request.files["image"]
 
 
-    # --------------------------------------------------------
-    # Check filename
-    # --------------------------------------------------------
-
     if file.filename == "":
 
-        print("ERROR: No file selected")
+        print(
+            "ERROR: No file selected."
+        )
 
         return {
 
@@ -619,9 +827,9 @@ def api_predict():
         }, 400
 
 
-    # --------------------------------------------------------
-    # Secure filename
-    # --------------------------------------------------------
+    # ========================================================
+    # SECURE FILENAME
+    # ========================================================
 
     filename = secure_filename(
         file.filename
@@ -630,7 +838,9 @@ def api_predict():
 
     if not filename:
 
-        print("ERROR: Invalid filename")
+        print(
+            "ERROR: Invalid filename."
+        )
 
         return {
 
@@ -641,9 +851,9 @@ def api_predict():
         }, 400
 
 
-    # --------------------------------------------------------
-    # Save image
-    # --------------------------------------------------------
+    # ========================================================
+    # SAVE IMAGE
+    # ========================================================
 
     filepath = os.path.join(
 
@@ -688,10 +898,13 @@ def api_predict():
 
     try:
 
-        prediction, confidence, top_predictions, confidence_status = (
-            predict_image(
-                filepath
-            )
+        (
+            prediction,
+            confidence,
+            top_predictions,
+            confidence_status
+        ) = predict_image(
+            filepath
         )
 
     except Exception as e:
@@ -736,10 +949,6 @@ def api_predict():
     )
 
 
-    # --------------------------------------------------------
-    # Fallback
-    # --------------------------------------------------------
-
     if info is None:
 
         print(
@@ -773,15 +982,6 @@ def api_predict():
 
     if confidence < 40:
 
-        print(
-            "Low confidence result."
-        )
-
-        print(
-            "=" * 60
-        )
-
-
         return {
 
             "success": True,
@@ -791,16 +991,20 @@ def api_predict():
             "message":
                 "Plant could not be identified confidently.",
 
-            "prediction": prediction,
+            "prediction":
+                prediction,
 
-            "plant": info["plant"],
+            "plant":
+                info["plant"],
 
-            "disease": info["disease"],
+            "disease":
+                info["disease"],
 
-            "confidence": round(
-                confidence,
-                2
-            ),
+            "confidence":
+                round(
+                    confidence,
+                    2
+                ),
 
             "confidence_status":
                 confidence_status,
@@ -864,7 +1068,6 @@ def api_predict():
 
         )
 
-
     except Exception as e:
 
         print(
@@ -886,7 +1089,6 @@ def api_predict():
             severity_level
 
         )
-
 
     except Exception as e:
 
@@ -934,22 +1136,29 @@ def api_predict():
 
     response = {
 
-        "success": True,
+        "success":
+            True,
 
-        "recognized": True,
+        "recognized":
+            True,
 
-        "image": filename,
+        "image":
+            filename,
 
-        "prediction": prediction,
+        "prediction":
+            prediction,
 
-        "plant": info["plant"],
+        "plant":
+            info["plant"],
 
-        "disease": info["disease"],
+        "disease":
+            info["disease"],
 
-        "confidence": round(
-            confidence,
-            2
-        ),
+        "confidence":
+            round(
+                confidence,
+                2
+            ),
 
         "confidence_status":
             confidence_status,
@@ -987,14 +1196,17 @@ def api_predict():
     }
 
 
-    print()
     print(
-        "Mobile API response prepared."
+        "Mobile API completed in",
+        round(
+            time.time() - request_start,
+            2
+        ),
+        "seconds"
     )
 
-    print(
-        "=" * 60
-    )
+
+    print("=" * 60)
 
 
     return response
@@ -1013,9 +1225,20 @@ def history():
     )
 
 
-    rows = get_history(
-        search
-    )
+    try:
+
+        rows = get_history(
+            search
+        )
+
+    except Exception as e:
+
+        print(
+            "History error:",
+            e
+        )
+
+        rows = []
 
 
     return render_template(
@@ -1034,7 +1257,7 @@ def history():
 # ============================================================
 
 @app.route(
-    "/uploads/<filename>"
+    "/uploads/<path:filename>"
 )
 def uploaded_file(
     filename
@@ -1055,10 +1278,20 @@ def uploaded_file(
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 5000))
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000
+        )
+    )
+
 
     app.run(
+
         host="0.0.0.0",
+
         port=port,
-        debug=True
+
+        debug=False
+
     )
