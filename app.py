@@ -273,31 +273,15 @@ def upload():
 
 
     # ========================================================
-    # GRAD-CAM
-    # ========================================================
+# GRAD-CAM
+# ========================================================
 
-    try:
+# Disabled on Render to prevent CPU/RAM timeout.
+# Prediction does not depend on Grad-CAM.
 
-        create_gradcam(
+gradcam_name = None
 
-            get_model(),
-
-            tensor,
-
-            filepath,
-
-            gradcam_path
-
-        )
-
-    except Exception as e:
-
-        print(
-            "Grad-CAM error:",
-            e
-        )
-
-        gradcam_name = None
+print("Grad-CAM skipped")
 
 
     # ========================================================
