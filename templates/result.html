@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html>
+
+	<head>
+
+		<title>PlantAI Report</title>
+
+
+		<style>
+
+
+			body{
+
+			font-family:Arial;
+			background:#f1f8e9;
+			padding:20px;
+
+			}
+
+
+			.container{
+
+			max-width:1000px;
+			margin:auto;
+			background:white;
+			padding:30px;
+			border-radius:15px;
+
+			}
+
+
+			h1{
+
+			text-align:center;
+			color:#2e7d32;
+
+			}
+
+
+			.images{
+
+			display:flex;
+			gap:25px;
+			justify-content:center;
+			flex-wrap:wrap;
+
+			}
+
+
+			.images img{
+
+			width:350px;
+			height:350px;
+			object-fit:contain;
+			border-radius:10px;
+			border:2px solid green;
+			background:#eeeeee;
+
+			}
+
+
+			.card{
+
+			background:#f9fbe7;
+			padding:20px;
+			margin-top:20px;
+			border-radius:10px;
+
+			}
+
+
+			li{
+
+			margin:8px;
+
+			}
+
+
+			.button{
+
+			display:block;
+			width:220px;
+			margin:25px auto;
+			padding:12px;
+			background:#388e3c;
+			color:white;
+			text-align:center;
+			text-decoration:none;
+			border-radius:8px;
+
+			}
+
+
+			.critical{
+
+			color:red;
+			font-weight:bold;
+
+			}
+
+
+			.moderate{
+
+			color:orange;
+			font-weight:bold;
+
+			}
+
+
+			.mild{
+
+			color:green;
+			font-weight:bold;
+
+			}
+
+
+		</style>
+
+
+	</head>
+
+
+
+	<body>
+
+
+		<div class="container">
+
+
+
+			<h1>
+				🌱 PlantAI Disease Diagnosis
+			</h1>
+
+
+
+			<div class="images">
+
+
+				<div>
+
+					<h3>Original Image</h3>
+
+					<img src="/uploads/{{image}}">
+
+</div>
+
+
+
+				<div>
+
+					<h3>AI Highlight</h3>
+
+					<img src="/uploads/{{highlight}}">
+
+</div>
+				<div>
+
+					<h3>
+						🤖 AI Attention Map
+					</h3>
+
+					<img src="/uploads/{{gradcam}}">
+
+</div>
+
+
+			</div>
+
+
+
+
+
+			<div class="card">
+
+
+				<h2>
+					📋 Diagnosis
+				</h2>
+
+
+				<p>
+					🌿 Plant:
+					<b>{{info.plant}}</b>
+				</p>
+
+
+				<p>
+					🦠 Disease:
+					<b>{{disease}}</b>
+				</p>
+
+
+				<p>
+					🎯 Confidence:
+					<b>{{confidence}}%</b>
+				</p>
+
+
+
+				<p>
+
+					📈 Severity:
+
+					{% if severity=="Critical" %}
+
+					<span class="critical">
+						{{severity}}
+					</span>
+
+
+					{% elif severity=="Moderate" %}
+
+					<span class="moderate">
+						{{severity}}
+					</span>
+
+
+					{% else %}
+
+					<span class="mild">
+						{{severity}}
+					</span>
+
+					{% endif %}
+
+				</p>
+
+
+
+				<p>
+
+					🍂 Leaf Area Affected:
+
+					<b>{{affected_area}}%</b>
+
+				</p>
+
+
+			</div>
+
+
+
+
+
+			<div class="card">
+
+				<h2>
+					🦠 Cause
+				</h2>
+
+				<p>
+					{{info.cause}}
+				</p>
+
+			</div>
+
+
+
+
+
+			<div class="card">
+
+				<h2>
+					🔍 Symptoms
+				</h2>
+
+				<ul>
+
+					{% for x in info.symptoms %}
+
+					<li>{{x}}</li>
+
+					{% endfor %}
+
+				</ul>
+
+			</div>
+
+
+
+
+
+			<div class="card">
+
+				<h2>
+					💊 Treatment
+				</h2>
+
+
+				<ul>
+
+					{% for x in info.treatment %}
+
+					<li>{{x}}</li>
+
+					{% endfor %}
+
+
+				</ul>
+
+
+			</div>
+			<div class="card">
+
+				<h2>
+					🤖 AI Explanation
+				</h2>
+
+				<p style="white-space:pre-line;">
+					{{ explanation }}
+				</p>
+
+			</div>
+
+
+
+
+			<div class="card">
+
+				<h2>
+					🌿 Organic Treatment
+				</h2>
+
+
+				<ul>
+
+					{% for x in info.organic_treatment %}
+
+					<li>{{x}}</li>
+
+					{% endfor %}
+
+
+				</ul>
+
+
+			</div>
+
+
+
+
+
+			<div class="card">
+
+				<h2>
+					🛡 Prevention
+				</h2>
+
+
+				<ul>
+
+					{% for x in info.prevention %}
+
+					<li>{{x}}</li>
+
+					{% endfor %}
+
+
+				</ul>
+
+
+			</div>
+
+
+
+
+
+			<div class="card">
+
+
+				<h2>
+					🚨 Severity Advice
+				</h2>
+
+
+				<p>
+					{{severity_advice.message}}
+				</p>
+
+
+				<ul>
+
+					{% for x in severity_advice.actions %}
+
+					<li>{{x}}</li>
+
+					{% endfor %}
+
+				</ul>
+
+
+			</div>
+
+
+
+
+
+			<a class="button"
+			href="/uploads/{{report}}"
+			download="">
+
+				📄 Download PDF Report
+
+			</a>
+
+
+
+			<a class="button"
+			href="/">
+
+				⬅ Analyze Another Leaf
+
+			</a>
+
+
+
+
+		</div>
+
+
+	</body>
+
+</html>

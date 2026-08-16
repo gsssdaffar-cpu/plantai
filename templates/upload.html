@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+
+
+<head>
+
+
+<meta charset="UTF-8">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+<title>Upload Leaf - PlantAI</title>
+
+
+
+<style>
+
+
+body {
+
+    font-family:Arial;
+    background:#f1f8e9;
+    padding:20px;
+
+}
+
+
+
+.container {
+
+    max-width:600px;
+    margin:50px auto;
+    background:white;
+    padding:35px;
+    border-radius:15px;
+    text-align:center;
+    box-shadow:0 5px 20px rgba(0,0,0,0.15);
+
+}
+
+
+
+
+h1 {
+
+    color:#2e7d32;
+
+}
+
+
+
+
+input[type=file] {
+
+    margin:20px;
+    padding:10px;
+
+}
+
+
+
+
+.preview {
+
+    margin-top:20px;
+
+}
+
+
+
+.preview img {
+
+    width:300px;
+    border-radius:10px;
+
+}
+
+
+
+
+
+button {
+
+
+    background:#388e3c;
+    color:white;
+    padding:14px 30px;
+    border:none;
+    border-radius:8px;
+    font-size:16px;
+    cursor:pointer;
+
+
+}
+
+
+
+
+button:hover {
+
+
+    background:#1b5e20;
+
+
+}
+
+
+
+
+
+.back {
+
+
+    display:block;
+    margin-top:25px;
+    color:#388e3c;
+    text-decoration:none;
+
+
+}
+
+
+
+</style>
+
+
+
+</head>
+
+
+
+<body>
+
+
+
+<div class="container">
+
+
+<h1>
+🌱 Upload Leaf Image
+</h1>
+
+
+
+<form action="/upload" method="POST" enctype="multipart/form-data">
+
+
+<input 
+type="file"
+name="image"
+accept="image/*"
+required
+onchange="previewImage(event)"
+>
+
+
+
+
+<div class="preview">
+
+<img id="preview"
+src=""
+style="display:none;">
+
+</div>
+
+
+
+
+<br>
+
+
+<button type="submit">
+
+🔍 Analyze Leaf
+
+</button>
+
+
+
+</form>
+
+
+
+
+<a class="back" href="/">
+
+⬅ Back to Dashboard
+
+</a>
+
+
+
+</div>
+
+
+
+
+
+
+
+<script>
+
+
+function previewImage(event){
+
+
+    let image=document.getElementById(
+        "preview"
+    );
+
+
+    image.src=
+    URL.createObjectURL(
+        event.target.files[0]
+    );
+
+
+    image.style.display="block";
+
+
+}
+
+
+</script>
+
+
+
+
+</body>
+
+</html>
