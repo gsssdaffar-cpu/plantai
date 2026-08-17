@@ -5,35 +5,23 @@
 PlantAI Prediction Engine
 ============================================================
 
-Optimized for low-memory Render deployment.
-
-Model:
-    EfficientNet-B0
-
-Classes:
-    38 PlantVillage classes
+Render optimized prediction engine.
 
 Features:
-    - CPU inference
-    - Lazy model loading
-    - Top-5 predictions
+    - EfficientNet-B0
+    - 38 plant disease classes
+    - One model only
+    - CPU compatible
+    - Memory optimized
+    - Top predictions
     - Confidence status
-    - Memory cleanup after every prediction
-
-NOT INCLUDED:
-    - Grad-CAM
-    - Attention map
-    - Severity
-    - Highlight
-    - PDF
-    - Explanation
-
-Those features should be handled separately.
+    - No Grad-CAM
+    - No second AI model
 ============================================================
 """
 
+import os
 import gc
-from pathlib import Path
 
 import torch
 from torchvision import models, transforms
@@ -44,95 +32,127 @@ from PIL import Image
 # DEVICE
 # ============================================================
 
-# Render deployment should use CPU.
-# Explicit CPU prevents unnecessary CUDA initialization.
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
 
-DEVICE = torch.device("cpu")
-
-print("=" * 60)
-print("PlantAI Prediction Engine")
-print("=" * 60)
-print("Device:", DEVICE)
-
-
-# ============================================================
-# PYTORCH THREAD CONTROL
-# ============================================================
-
-# Render Free instances have limited CPU/RAM.
-# Limiting threads helps reduce memory usage.
-
-try:
-    torch.set_num_threads(1)
-except Exception:
-    pass
-
-try:
-    torch.set_num_interop_threads(1)
-except Exception:
-    pass
+print("Using device:", DEVICE)
 
 
 # ============================================================
 # PATHS
 # ============================================================
 
-BASE_DIR = Path(
-    __file__
-).resolve().parent
-
-
-MODEL_PATH = (
-    BASE_DIR
-    / "models"
-    / "plant_model_38class.pth"
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
 )
 
-
-CLASS_NAMES_PATH = (
-    BASE_DIR
-    / "models"
-    / "class_names.pth"
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "models",
+    "plant_model_38class.pth"
 )
 
 
 # ============================================================
-# VERIFY MODEL
+# CLASS NAMES
 # ============================================================
 
-if not MODEL_PATH.exists():
+CLASS_NAMES = [
 
-    raise FileNotFoundError(
+    "Apple___Apple_scab",
 
-        "\nPlantAI model file not found.\n\n"
+    "Apple___Black_rot",
 
-        f"Expected:\n"
-        f"{MODEL_PATH}\n"
+    "Apple___Cedar_apple_rust",
 
-    )
+    "Apple___healthy",
+
+    "Blueberry___healthy",
+
+    "Cherry_(including_sour)___Powdery_mildew",
+
+    "Cherry_(including_sour)___healthy",
+
+    "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot",
+
+    "Corn_(maize)___Common_rust_",
+
+    "Corn_(maize)___Northern_Leaf_Blight",
+
+    "Corn_(maize)___healthy",
+
+    "Grape___Black_rot",
+
+    "Grape___Esca_(Black_Measles)",
+
+    "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)",
+
+    "Grape___healthy",
+
+    "Orange___Haunglongbing_(Citrus_greening)",
+
+    "Peach___Bacterial_spot",
+
+    "Peach___healthy",
+
+    "Pepper,_bell___Bacterial_spot",
+
+    "Pepper,_bell___healthy",
+
+    "Potato___Early_blight",
+
+    "Potato___Late_blight",
+
+    "Potato___healthy",
+
+    "Raspberry___healthy",
+
+    "Soybean___healthy",
+
+    "Squash___Powdery_mildew",
+
+    "Strawberry___Leaf_scorch",
+
+    "Strawberry___healthy",
+
+    "Tomato___Bacterial_spot",
+
+    "Tomato___Early_blight",
+
+    "Tomato___Late_blight",
+
+    "Tomato___Leaf_Mold",
+
+    "Tomato___Septoria_leaf_spot",
+
+    "Tomato___Spider_mites Two-spotted_spider_mite",
+
+    "Tomato___Target_Spot",
+
+    "Tomato___Tomato_Yellow_Leaf_Curl_Virus",
+
+    "Tomato___Tomato_mosaic_virus",
+
+    "Tomato___healthy"
+]
+
+
+NUM_CLASSES = len(CLASS_NAMES)
 
 
 # ============================================================
-# VERIFY CLASS NAMES
+# MODEL
 # ============================================================
 
-if not CLASS_NAMES_PATH.exists():
-
-    raise FileNotFoundError(
-
-        "\nPlantAI class names file not found.\n\n"
-
-        f"Expected:\n"
-        f"{CLASS_NAMES_PATH}\n"
-
-    )
+MODEL = None
 
 
 # ============================================================
-# IMAGE TRANSFORM
+# TRANSFORM
 # ============================================================
 
-transform = transforms.Compose([
+TRANSFORM = transforms.Compose([
 
     transforms.Resize(
         (224, 224)
@@ -160,203 +180,126 @@ transform = transforms.Compose([
 
 
 # ============================================================
-# LOAD CLASS NAMES
-# ============================================================
-
-print(
-    "Loading class names..."
-)
-
-
-CLASS_NAMES = torch.load(
-
-    CLASS_NAMES_PATH,
-
-    map_location="cpu",
-
-    weights_only=False
-
-)
-
-
-# ============================================================
-# NORMALIZE CLASS NAMES
-# ============================================================
-
-if isinstance(
-    CLASS_NAMES,
-    tuple
-):
-
-    CLASS_NAMES = list(
-        CLASS_NAMES
-    )
-
-
-elif not isinstance(
-    CLASS_NAMES,
-    list
-):
-
-    CLASS_NAMES = list(
-        CLASS_NAMES
-    )
-
-
-# ============================================================
-# NUMBER OF CLASSES
-# ============================================================
-
-NUM_CLASSES = len(
-    CLASS_NAMES
-)
-
-
-print(
-    "Number of classes:",
-    NUM_CLASSES
-)
-
-
-if NUM_CLASSES != 38:
-
-    raise RuntimeError(
-
-        "\nIncorrect number of classes.\n"
-
-        f"Expected: 38\n"
-        f"Found: {NUM_CLASSES}\n"
-
-    )
-
-
-# ============================================================
-# OPTIONAL CLASS MAPPING LOG
-# ============================================================
-
-print()
-print("PlantAI class mapping:")
-
-for index, class_name in enumerate(
-    CLASS_NAMES
-):
-
-    print(
-        f"{index:02d} : {class_name}"
-    )
-
-print()
-
-
-# ============================================================
-# GLOBAL MODEL
-# ============================================================
-
-# IMPORTANT:
-#
-# We DO NOT load the model at import time.
-#
-# It will be loaded only when the first prediction occurs.
-#
-# This reduces startup memory pressure.
-
-model = None
-
-
-# ============================================================
-# CREATE MODEL
+# MODEL CREATION
 # ============================================================
 
 def create_model():
 
-    """
-    Create EfficientNet-B0 with 38 output classes.
-    """
-
-    model_instance = (
-        models.efficientnet_b0(
-            weights=None
-        )
+    print(
+        "Creating EfficientNet-B0..."
     )
 
-
-    # --------------------------------------------------------
-    # EfficientNet classifier
-    # --------------------------------------------------------
-
-    input_features = (
-        model_instance
-        .classifier[1]
-        .in_features
+    model = models.efficientnet_b0(
+        weights=None
     )
 
-
-    model_instance.classifier[1] = (
-
-        torch.nn.Linear(
-
-            input_features,
-
-            NUM_CLASSES
-
-        )
-
+    # Replace classifier
+    model.classifier[1] = torch.nn.Linear(
+        model.classifier[1].in_features,
+        NUM_CLASSES
     )
 
-
-    return model_instance
+    return model
 
 
 # ============================================================
-# CLEAN STATE DICTIONARY
+# CHECKPOINT EXTRACTION
 # ============================================================
 
-def clean_state_dict(
-    state_dict
-):
+def extract_state_dict(checkpoint):
 
-    """
-    Remove common prefixes from saved checkpoints.
+    # --------------------------------------------------------
+    # Direct state_dict
+    # --------------------------------------------------------
 
-    Handles:
+    if isinstance(
+        checkpoint,
+        dict
+    ):
 
-        module.xxx
-        model.xxx
-    """
+        if "state_dict" in checkpoint:
+
+            return checkpoint["state_dict"]
+
+        if "model_state_dict" in checkpoint:
+
+            return checkpoint[
+                "model_state_dict"
+            ]
+
+        if "model" in checkpoint:
+
+            model_value = checkpoint["model"]
+
+            if isinstance(
+                model_value,
+                dict
+            ):
+
+                return model_value
+
+
+        # Check if this itself looks like state_dict
+        keys = list(
+            checkpoint.keys()
+        )
+
+        if keys:
+
+            tensor_count = sum(
+
+                1
+
+                for value in checkpoint.values()
+
+                if torch.is_tensor(value)
+
+            )
+
+            if tensor_count > 0:
+
+                return checkpoint
+
+
+    # --------------------------------------------------------
+    # Complete model
+    # --------------------------------------------------------
+
+    if hasattr(
+        checkpoint,
+        "state_dict"
+    ):
+
+        return checkpoint.state_dict()
+
+
+    raise RuntimeError(
+        "Could not find model state_dict in checkpoint."
+    )
+
+
+# ============================================================
+# CLEAN STATE DICT
+# ============================================================
+
+def clean_state_dict(state_dict):
 
     cleaned = {}
 
-
     for key, value in state_dict.items():
 
-        # ----------------------------------------------------
-        # DataParallel prefix
-        # ----------------------------------------------------
+        new_key = key
 
-        if key.startswith(
+        # Remove DataParallel prefix
+        if new_key.startswith(
             "module."
         ):
 
-            key = key[
+            new_key = new_key[
                 len("module.") :
             ]
 
-
-        # ----------------------------------------------------
-        # Model prefix
-        # ----------------------------------------------------
-
-        if key.startswith(
-            "model."
-        ):
-
-            key = key[
-                len("model.") :
-            ]
-
-
-        cleaned[key] = value
-
+        cleaned[new_key] = value
 
     return cleaned
 
@@ -365,30 +308,18 @@ def clean_state_dict(
 # LOAD MODEL
 # ============================================================
 
-def load_model():
+def get_model():
 
-    """
-    Load EfficientNet model only once.
+    global MODEL
 
-    Every request reuses the same model.
-    """
+    if MODEL is not None:
 
-    global model
+        return MODEL
 
 
-    # --------------------------------------------------------
-    # Already loaded
-    # --------------------------------------------------------
-
-    if model is not None:
-
-        return model
-
-
-    print()
-    print("=" * 60)
-    print("Loading PlantAI model...")
-    print("=" * 60)
+    print(
+        "Loading PlantAI model..."
+    )
 
     print(
         "Model path:",
@@ -396,147 +327,135 @@ def load_model():
     )
 
 
-    # ========================================================
-    # LOAD CHECKPOINT
-    # ========================================================
-
-    checkpoint = torch.load(
-
-        MODEL_PATH,
-
-        map_location="cpu",
-
-        weights_only=False
-
-    )
-
-
-    # ========================================================
-    # GET STATE DICTIONARY
-    # ========================================================
-
-    if isinstance(
-        checkpoint,
-        dict
+    if not os.path.exists(
+        MODEL_PATH
     ):
 
-        if (
-            "model_state_dict"
-            in checkpoint
-        ):
+        raise FileNotFoundError(
 
-            state_dict = (
-                checkpoint[
-                    "model_state_dict"
-                ]
-            )
+            "Model file not found: "
 
+            + MODEL_PATH
 
-        elif (
-            "state_dict"
-            in checkpoint
-        ):
-
-            state_dict = (
-                checkpoint[
-                    "state_dict"
-                ]
-            )
-
-
-        else:
-
-            state_dict = checkpoint
-
-
-    else:
-
-        state_dict = checkpoint
-
-
-    # ========================================================
-    # CREATE ARCHITECTURE
-    # ========================================================
-
-    model_instance = (
-        create_model()
-    )
-
-
-    # ========================================================
-    # CLEAN CHECKPOINT KEYS
-    # ========================================================
-
-    state_dict = (
-        clean_state_dict(
-            state_dict
         )
-    )
 
 
-    # ========================================================
-    # LOAD WEIGHTS
-    # ========================================================
+    # --------------------------------------------------------
+    # Create architecture
+    # --------------------------------------------------------
+
+    model = create_model()
+
+
+    # --------------------------------------------------------
+    # Load checkpoint
+    # --------------------------------------------------------
 
     try:
 
-        model_instance.load_state_dict(
+        checkpoint = torch.load(
 
+            MODEL_PATH,
+
+            map_location=DEVICE,
+
+            weights_only=False
+
+        )
+
+    except TypeError:
+
+        # Older PyTorch versions
+        checkpoint = torch.load(
+
+            MODEL_PATH,
+
+            map_location=DEVICE
+
+        )
+
+
+    # --------------------------------------------------------
+    # Extract weights
+    # --------------------------------------------------------
+
+    state_dict = extract_state_dict(
+        checkpoint
+    )
+
+    state_dict = clean_state_dict(
+        state_dict
+    )
+
+
+    # --------------------------------------------------------
+    # Load weights
+    # --------------------------------------------------------
+
+    try:
+
+        model.load_state_dict(
             state_dict,
-
             strict=True
-
         )
 
     except RuntimeError as e:
 
-        print()
-        print("=" * 60)
-        print("MODEL LOADING ERROR")
-        print("=" * 60)
-        print(e)
-        print("=" * 60)
+        print(
+            "Strict model loading failed."
+        )
 
-        raise
+        print(
+            "Trying compatible loading..."
+        )
+
+        result = model.load_state_dict(
+            state_dict,
+            strict=False
+        )
+
+        print(
+            "Missing keys:",
+            result.missing_keys
+        )
+
+        print(
+            "Unexpected keys:",
+            result.unexpected_keys
+        )
+
+        if len(result.missing_keys) > 0:
+
+            raise RuntimeError(
+
+                "Model checkpoint does not match "
+                "EfficientNet-B0 38-class architecture.\n"
+                + str(e)
+
+            )
 
 
-    # ========================================================
-    # CPU
-    # ========================================================
+    # --------------------------------------------------------
+    # Evaluation mode
+    # --------------------------------------------------------
 
-    model_instance = (
-        model_instance.cpu()
+    model.eval()
+
+
+    # --------------------------------------------------------
+    # Device
+    # --------------------------------------------------------
+
+    model.to(
+        DEVICE
     )
 
 
-    # ========================================================
-    # EVALUATION MODE
-    # ========================================================
+    # --------------------------------------------------------
+    # Store globally
+    # --------------------------------------------------------
 
-    model_instance.eval()
-
-
-    # ========================================================
-    # STORE GLOBAL MODEL
-    # ========================================================
-
-    model = model_instance
-
-
-    # ========================================================
-    # DELETE CHECKPOINT OBJECTS
-    # ========================================================
-
-    del checkpoint
-    del state_dict
-    del model_instance
-
-
-    # ========================================================
-    # GARBAGE COLLECTION
-    # ========================================================
-
-    gc.collect()
+    MODEL = model
 
 
     print(
@@ -544,29 +463,17 @@ def load_model():
     )
 
     print(
-        "Device:",
-        DEVICE
-    )
-
-    print(
         "Classes:",
         NUM_CLASSES
     )
 
-    print("=" * 60)
-    print()
+    print(
+        "Device:",
+        DEVICE
+    )
 
 
-    return model
-
-
-# ============================================================
-# GET MODEL
-# ============================================================
-
-def get_model():
-
-    return load_model()
+    return MODEL
 
 
 # ============================================================
@@ -575,294 +482,280 @@ def get_model():
 
 def get_transform():
 
-    return transform
+    return TRANSFORM
 
 
 # ============================================================
-# GET CLASS NAMES
+# FORMAT CLASS NAME
 # ============================================================
 
-def get_class_names():
+def format_prediction_name(
+    class_name
+):
 
-    return CLASS_NAMES
+    if not class_name:
+
+        return "Unknown"
+
+
+    # Split plant / disease
+    if "___" in class_name:
+
+        plant, disease = class_name.split(
+            "___",
+            1
+        )
+
+    else:
+
+        plant = "Unknown"
+
+        disease = class_name
+
+
+    # Clean plant name
+    plant = plant.replace(
+        "_",
+        " "
+    )
+
+    plant = plant.replace(
+        ",",
+        ", "
+    )
+
+    # Clean disease name
+    disease = disease.replace(
+        "_",
+        " "
+    )
+
+    disease = disease.replace(
+        "  ",
+        " "
+    )
+
+
+    return (
+
+        plant.strip()
+
+        + " - "
+
+        + disease.strip()
+
+    )
 
 
 # ============================================================
-# PREDICT IMAGE
+# CONFIDENCE STATUS
+# ============================================================
+
+def get_confidence_status(
+    confidence
+):
+
+    if confidence >= 85:
+
+        return "Very High Confidence"
+
+    if confidence >= 70:
+
+        return "High Confidence"
+
+    if confidence >= 55:
+
+        return "Moderate Confidence"
+
+    if confidence >= 40:
+
+        return "Low Confidence"
+
+    return "Very Low Confidence"
+
+
+# ============================================================
+# PREDICTION
 # ============================================================
 
 def predict_image(
     image_path
 ):
 
-    """
-    Run PlantAI prediction.
+    model = get_model()
 
-    Returns:
 
-        prediction
-        confidence
-        top_predictions
-        confidence_status
-    """
+    # --------------------------------------------------------
+    # Validate image
+    # --------------------------------------------------------
 
-    print()
-    print("=" * 60)
-    print("Starting PlantAI prediction")
-    print("=" * 60)
-
-    print(
-        "Image:",
+    if not os.path.exists(
         image_path
-    )
+    ):
 
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
 
-    # ========================================================
-    # LOAD MODEL
-    # ========================================================
-
-    prediction_model = (
-        load_model()
-    )
-
-
-    # ========================================================
-    # IMAGE
-    # ========================================================
 
     image = None
 
-    image_tensor = None
-    output = None
+    tensor = None
+
     probabilities = None
-    top_probabilities = None
-    top_indices = None
 
 
     try:
 
-        # ====================================================
-        # OPEN IMAGE
-        # ====================================================
+        # ----------------------------------------------------
+        # Open image
+        # ----------------------------------------------------
 
         image = Image.open(
             image_path
-        )
-
-
-        # ====================================================
-        # CONVERT RGB
-        # ====================================================
-
-        image = image.convert(
+        ).convert(
             "RGB"
         )
 
 
-        # ====================================================
-        # RESIZE
-        # ====================================================
+        # ----------------------------------------------------
+        # Transform
+        # ----------------------------------------------------
 
-        image = image.resize(
-            (224, 224)
-        )
-
-
-        # ====================================================
-        # TRANSFORM
-        # ====================================================
-
-        image_tensor = transform(
+        tensor = TRANSFORM(
             image
+        ).unsqueeze(
+            0
         )
 
 
-        # ====================================================
-        # ADD BATCH DIMENSION
-        # ====================================================
-
-        image_tensor = (
-            image_tensor
-            .unsqueeze(0)
+        tensor = tensor.to(
+            DEVICE
         )
 
 
-        # ====================================================
-        # CPU
-        # ====================================================
-
-        image_tensor = (
-            image_tensor.cpu()
-        )
-
-
-        # ====================================================
-        # INFERENCE
-        # ====================================================
+        # ----------------------------------------------------
+        # Prediction
+        # ----------------------------------------------------
 
         with torch.inference_mode():
 
-            output = prediction_model(
-                image_tensor
+            outputs = model(
+                tensor
+            )
+
+            probabilities = torch.softmax(
+                outputs,
+                dim=1
             )
 
 
-            probabilities = (
-                torch.softmax(
+        # ----------------------------------------------------
+        # Top predictions
+        # ----------------------------------------------------
 
-                    output,
-
-                    dim=1
-
-                )
-            )
-
-
-            # =================================================
-            # TOP 5
-            # =================================================
-
-            top_k = min(
-                5,
-                NUM_CLASSES
-            )
+        top_count = min(
+            5,
+            NUM_CLASSES
+        )
 
 
-            top_probabilities, top_indices = (
+        values, indices = torch.topk(
 
-                torch.topk(
+            probabilities,
 
-                    probabilities,
+            top_count,
 
-                    k=top_k,
+            dim=1
 
-                    dim=1
-
-                )
-
-            )
+        )
 
 
-        # ====================================================
-        # BUILD TOP PREDICTIONS
-        # ====================================================
+        values = values[
+            0
+        ].detach().cpu().tolist()
+
+
+        indices = indices[
+            0
+        ].detach().cpu().tolist()
+
+
+        # ----------------------------------------------------
+        # Best prediction
+        # ----------------------------------------------------
+
+        best_index = indices[0]
+
+        confidence = (
+            values[0] * 100.0
+        )
+
+
+        raw_prediction = CLASS_NAMES[
+            best_index
+        ]
+
+
+        prediction = format_prediction_name(
+            raw_prediction
+        )
+
+
+        # ----------------------------------------------------
+        # Top prediction list
+        # ----------------------------------------------------
 
         top_predictions = []
 
 
-        for probability, index in zip(
-
-            top_probabilities[0],
-
-            top_indices[0]
-
+        for value, index in zip(
+            values,
+            indices
         ):
 
-            index = int(
-                index.item()
-            )
+            raw_name = CLASS_NAMES[
+                index
+            ]
 
-
-            confidence_value = (
-
-                float(
-                    probability.item()
-                )
-
-                * 100.0
-
-            )
-
-
-            class_name = (
-                CLASS_NAMES[index]
+            formatted_name = format_prediction_name(
+                raw_name
             )
 
 
             top_predictions.append({
 
-                "class_name":
-                    class_name,
+                "class":
+                    formatted_name,
+
+                "raw_class":
+                    raw_name,
 
                 "confidence":
                     round(
-                        confidence_value,
+                        value * 100.0,
                         2
-                    ),
-
-                "index":
-                    index
+                    )
 
             })
 
 
-        # ====================================================
-        # BEST PREDICTION
-        # ====================================================
+        # ----------------------------------------------------
+        # Confidence status
+        # ----------------------------------------------------
 
-        prediction = (
-            top_predictions[0]
-            ["class_name"]
+        confidence_status = get_confidence_status(
+            confidence
         )
 
 
-        confidence = (
-            top_predictions[0]
-            ["confidence"]
-        )
-
-
-        # ====================================================
-        # CONFIDENCE STATUS
-        # ====================================================
-
-        if confidence < 40:
-
-            confidence_status = (
-                "Unknown"
-            )
-
-
-        elif confidence < 60:
-
-            confidence_status = (
-                "Low confidence"
-            )
-
-
-        elif confidence < 80:
-
-            confidence_status = (
-                "Possible diagnosis"
-            )
-
-
-        elif confidence < 95:
-
-            confidence_status = (
-                "Likely diagnosis"
-            )
-
-
-        else:
-
-            confidence_status = (
-                "High confidence"
-            )
-
-
-        # ====================================================
-        # LOG
-        # ====================================================
-
-        print()
         print(
             "Prediction:",
             prediction
         )
 
         print(
-            f"Confidence: "
+            "Confidence:",
             f"{confidence:.2f}%"
         )
 
@@ -871,43 +764,18 @@ def predict_image(
             confidence_status
         )
 
-        print()
-        print(
-            "Top 5 predictions:"
-        )
 
-
-        for i, item in enumerate(
-
-            top_predictions,
-
-            start=1
-
-        ):
-
-            print(
-
-                f"{i}. "
-                f"{item['class_name']} "
-                f"({item['confidence']:.2f}%)"
-
-            )
-
-
-        print(
-            "=" * 60
-        )
-
-
-        # ====================================================
-        # RETURN
-        # ====================================================
+        # ----------------------------------------------------
+        # Return
+        # ----------------------------------------------------
 
         return (
 
             prediction,
 
-            confidence,
+            float(
+                confidence
+            ),
 
             top_predictions,
 
@@ -918,70 +786,104 @@ def predict_image(
 
     finally:
 
-        # ====================================================
-        # CLOSE PIL IMAGE
-        # ====================================================
+        # ----------------------------------------------------
+        # Cleanup
+        # ----------------------------------------------------
 
-        if image is not None:
+        image = None
+
+        tensor = None
+
+        probabilities = None
+
+        try:
+
+            del outputs
+
+        except Exception:
+
+            pass
+
+        try:
+
+            del values
+
+        except Exception:
+
+            pass
+
+        try:
+
+            del indices
+
+        except Exception:
+
+            pass
+
+        gc.collect()
+
+
+        if DEVICE.type == "cuda":
 
             try:
 
-                image.close()
+                torch.cuda.empty_cache()
 
             except Exception:
 
                 pass
 
 
-        # ====================================================
-        # DELETE TEMPORARY TENSORS
-        # ====================================================
-
-        image_tensor = None
-        output = None
-        probabilities = None
-        top_probabilities = None
-        top_indices = None
-
-
-        # ====================================================
-        # GARBAGE COLLECTION
-        # ====================================================
-
-        gc.collect()
-
-
-        print(
-            "Prediction temporary memory released."
-        )
-
-
 # ============================================================
-# OPTIONAL MEMORY CLEANUP
+# CLEANUP
 # ============================================================
 
 def cleanup():
 
-    """
-    Manually release temporary PyTorch memory.
-
-    The model itself is intentionally kept loaded so
-    subsequent predictions don't reload it.
-    """
-
     gc.collect()
 
 
+    if DEVICE.type == "cuda":
+
+        try:
+
+            torch.cuda.empty_cache()
+
+        except Exception:
+
+            pass
+
+
 # ============================================================
-# STARTUP MESSAGE
+# TEST
 # ============================================================
 
-print(
-    "PlantAI prediction engine ready."
-)
+if __name__ == "__main__":
 
-print(
-    "Model will be loaded on first prediction."
-)
+    print()
+    print("=" * 60)
+    print("PlantAI Prediction Engine Test")
+    print("=" * 60)
 
-print()
+    print(
+        "Model:",
+        MODEL_PATH
+    )
+
+    print(
+        "Classes:",
+        NUM_CLASSES
+    )
+
+    print(
+        "Device:",
+        DEVICE
+    )
+
+    model = get_model()
+
+    print(
+        "Model test successful."
+    )
+
+    print("=" * 60)
