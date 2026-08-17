@@ -1,5 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
+
 from pathlib import Path
+import time
 
 import torch
 from torchvision import models, transforms
@@ -10,11 +12,32 @@ from PIL import Image
 # DEVICE
 # ============================================================
 
+# Render normally runs CPU.
+# Force CPU unless CUDA is genuinely available.
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
 
 print("Using device:", DEVICE)
+
+
+# ============================================================
+# CPU THREAD LIMIT
+# ============================================================
+
+# Prevent PyTorch from creating too many CPU threads
+# on a small Render instance.
+
+if DEVICE.type == "cpu":
+
+    torch.set_num_threads(1)
+
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+
+    print("PyTorch CPU threads:", torch.get_num_threads())
 
 
 # ============================================================
@@ -44,9 +67,7 @@ if not MODEL_PATH.exists():
 
     raise FileNotFoundError(
         f"\nModel file not found:\n"
-        f"{MODEL_PATH}\n\n"
-        f"Expected location:\n"
-        f"{BASE_DIR.parent / 'models'}"
+        f"{MODEL_PATH}"
     )
 
 
@@ -88,10 +109,17 @@ print("=" * 60)
 print("Loading PlantAI model...")
 print("=" * 60)
 
+load_start = time.perf_counter()
+
 checkpoint = torch.load(
     MODEL_PATH,
-    map_location=DEVICE,
+    map_location="cpu",
     weights_only=False
+)
+
+print(
+    f"Checkpoint loaded in "
+    f"{time.perf_counter() - load_start:.2f} seconds"
 )
 
 
@@ -154,8 +182,7 @@ elif CLASS_NAMES_PATH.exists():
 else:
 
     raise FileNotFoundError(
-        "\nClass names not found.\n"
-        "Expected class_names.pth at:\n"
+        "\nClass names not found:\n"
         f"{CLASS_NAMES_PATH}"
     )
 
@@ -168,34 +195,16 @@ NUM_CLASSES = len(
     CLASS_NAMES
 )
 
-
 print(
     "Prediction classes:",
     NUM_CLASSES
 )
 
-
 if NUM_CLASSES != 38:
 
     raise RuntimeError(
-        f"\nExpected 38 classes, "
-        f"but found {NUM_CLASSES}."
-    )
-
-
-# ============================================================
-# PRINT CLASS MAPPING
-# ============================================================
-
-print()
-print("Class mapping:")
-
-for index, class_name in enumerate(
-    CLASS_NAMES
-):
-
-    print(
-        f"{index:02d} : {class_name}"
+        f"Expected 38 classes, "
+        f"but found {NUM_CLASSES}"
     )
 
 
@@ -209,21 +218,14 @@ def create_model():
         weights=None
     )
 
-
-    # --------------------------------------------------------
-    # Replace classifier
-    # --------------------------------------------------------
-
     input_features = (
         model.classifier[1].in_features
     )
-
 
     model.classifier[1] = torch.nn.Linear(
         input_features,
         NUM_CLASSES
     )
-
 
     return model
 
@@ -241,10 +243,7 @@ model = create_model()
 
 clean_state_dict = {}
 
-
 for key, value in state_dict.items():
-
-    # Remove DataParallel prefix
 
     if key.startswith("module."):
 
@@ -252,15 +251,11 @@ for key, value in state_dict.items():
             len("module.") :
         ]
 
-
-    # Remove model prefix
-
     if key.startswith("model."):
 
         key = key[
             len("model.") :
         ]
-
 
     clean_state_dict[key] = value
 
@@ -269,23 +264,12 @@ for key, value in state_dict.items():
 # LOAD WEIGHTS
 # ============================================================
 
-try:
+print("Loading model weights...")
 
-    model.load_state_dict(
-        clean_state_dict,
-        strict=True
-    )
-
-except RuntimeError as e:
-
-    print()
-    print("=" * 60)
-    print("❌ MODEL LOADING ERROR")
-    print("=" * 60)
-    print(e)
-    print("=" * 60)
-
-    raise
+model.load_state_dict(
+    clean_state_dict,
+    strict=True
+)
 
 
 # ============================================================
@@ -305,35 +289,57 @@ model.eval()
 
 
 # ============================================================
-# MODEL INFORMATION
+# OPTIONAL MODEL INFORMATION
 # ============================================================
 
 if isinstance(checkpoint, dict):
 
     if "best_accuracy" in checkpoint:
 
-        print(
-            f"\nBest validation accuracy: "
-            f"{checkpoint['best_accuracy']:.2f}%"
-        )
+        try:
+
+            print(
+                f"Best validation accuracy: "
+                f"{checkpoint['best_accuracy']:.2f}%"
+            )
+
+        except Exception:
+
+            pass
 
     if "num_classes" in checkpoint:
 
         print(
-            f"Model classes: "
-            f"{checkpoint['num_classes']}"
+            "Model classes:",
+            checkpoint["num_classes"]
         )
 
 
+# ============================================================
+# CLEANUP CHECKPOINT
+# ============================================================
+
+# We don't need the complete checkpoint anymore.
+# Keeping it in memory can unnecessarily increase RAM usage.
+
+del checkpoint
+del state_dict
+del clean_state_dict
+
+if DEVICE.type == "cuda":
+
+    torch.cuda.empty_cache()
+
+
+# ============================================================
+# MODEL READY
+# ============================================================
+
 print()
-print(
-    "✅ Prediction model loaded:"
-)
-
-print(
-    MODEL_PATH
-)
-
+print("✅ PlantAI prediction model loaded")
+print("Model:", MODEL_PATH)
+print("Device:", DEVICE)
+print("=" * 60)
 print()
 
 
@@ -368,10 +374,6 @@ def get_class_names():
 # PREDICT IMAGE
 # ============================================================
 
-# ============================================================
-# PREDICT IMAGE - TOP 5
-# ============================================================
-
 def predict_image(image_path):
 
     """
@@ -382,61 +384,61 @@ def predict_image(image_path):
         prediction
         confidence
         top_predictions
-
-    top_predictions format:
-
-        [
-            {
-                "class_name": "...",
-                "confidence": 62.94,
-                "index": 7
-            }
-        ]
+        confidence_status
     """
 
-    # --------------------------------------------------------
-    # Load image
-    # --------------------------------------------------------
-
-    image = Image.open(
-        image_path
-    ).convert("RGB")
+    prediction_start = time.perf_counter()
 
 
-    # --------------------------------------------------------
-    # Transform image
-    # --------------------------------------------------------
+    # ========================================================
+    # LOAD IMAGE
+    # ========================================================
+
+    image_start = time.perf_counter()
+
+    with Image.open(image_path) as img:
+
+        image = img.convert("RGB")
+
+
+    print(
+        f"Image loaded in "
+        f"{time.perf_counter() - image_start:.3f}s"
+    )
+
+
+    # ========================================================
+    # TRANSFORM
+    # ========================================================
+
+    transform_start = time.perf_counter()
 
     image_tensor = transform(
         image
     )
 
+    image_tensor = image_tensor.unsqueeze(
+        0
+    )
 
-    # --------------------------------------------------------
-    # Add batch dimension
-    # --------------------------------------------------------
-
-    image_tensor = (
-        image_tensor
-        .unsqueeze(0)
+    image_tensor = image_tensor.to(
+        DEVICE
     )
 
 
-    # --------------------------------------------------------
-    # Move to device
-    # --------------------------------------------------------
-
-    image_tensor = (
-        image_tensor
-        .to(DEVICE)
+    print(
+        f"Image transformed in "
+        f"{time.perf_counter() - transform_start:.3f}s"
     )
 
 
-    # --------------------------------------------------------
-    # Prediction
-    # --------------------------------------------------------
+    # ========================================================
+    # INFERENCE
+    # ========================================================
 
-    with torch.no_grad():
+    inference_start = time.perf_counter()
+
+    with torch.inference_mode():
 
         output = model(
             image_tensor
@@ -447,21 +449,31 @@ def predict_image(image_path):
             dim=1
         )
 
-
-        # ----------------------------------------------------
-        # TOP 5
-        # ----------------------------------------------------
-
         top_probabilities, top_indices = torch.topk(
             probabilities,
-            k=min(5, len(CLASS_NAMES)),
+            k=min(
+                5,
+                len(CLASS_NAMES)
+            ),
             dim=1
         )
 
 
-    # --------------------------------------------------------
-    # Convert TOP 5
-    # --------------------------------------------------------
+    inference_time = (
+        time.perf_counter()
+        - inference_start
+    )
+
+
+    print(
+        f"Model inference time: "
+        f"{inference_time:.3f}s"
+    )
+
+
+    # ========================================================
+    # TOP 5
+    # ========================================================
 
     top_predictions = []
 
@@ -473,28 +485,34 @@ def predict_image(image_path):
         index = index.item()
 
         confidence_value = (
-            probability.item() * 100
+            probability.item()
+            * 100
         )
 
-        class_name = CLASS_NAMES[index]
+        class_name = CLASS_NAMES[
+            index
+        ]
 
         top_predictions.append({
 
-            "class_name": class_name,
+            "class_name":
+                class_name,
 
-            "confidence": round(
-                confidence_value,
-                2
-            ),
+            "confidence":
+                round(
+                    confidence_value,
+                    2
+                ),
 
-            "index": index
+            "index":
+                index
 
         })
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # BEST PREDICTION
-    # --------------------------------------------------------
+    # ========================================================
 
     prediction = (
         top_predictions[0]["class_name"]
@@ -505,9 +523,9 @@ def predict_image(image_path):
     )
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # CONFIDENCE STATUS
-    # --------------------------------------------------------
+    # ========================================================
 
     if confidence < 40:
 
@@ -530,9 +548,34 @@ def predict_image(image_path):
         confidence_status = "High confidence"
 
 
-    # --------------------------------------------------------
-    # PRINT RESULTS
-    # --------------------------------------------------------
+    # ========================================================
+    # CLEAN TENSORS
+    # ========================================================
+
+    del image_tensor
+    del output
+    del probabilities
+    del top_probabilities
+    del top_indices
+
+    if DEVICE.type == "cuda":
+
+        torch.cuda.empty_cache()
+
+
+    # ========================================================
+    # TIMING
+    # ========================================================
+
+    total_time = (
+        time.perf_counter()
+        - prediction_start
+    )
+
+
+    # ========================================================
+    # RESULT LOG
+    # ========================================================
 
     print()
     print("=" * 60)
@@ -545,12 +588,23 @@ def predict_image(image_path):
     )
 
     print(
-        f"Confidence: {confidence:.2f}%"
+        f"Confidence: "
+        f"{confidence:.2f}%"
     )
 
     print(
         "Status:",
         confidence_status
+    )
+
+    print(
+        f"Inference: "
+        f"{inference_time:.3f}s"
+    )
+
+    print(
+        f"Total prediction time: "
+        f"{total_time:.3f}s"
     )
 
     print()
@@ -571,133 +625,18 @@ def predict_image(image_path):
     print()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # RETURN
-    # --------------------------------------------------------
+    # ========================================================
 
     return (
+
         prediction,
+
         confidence,
+
         top_predictions,
+
         confidence_status
-    )
 
-
-    # --------------------------------------------------------
-    # Load image
-    # --------------------------------------------------------
-
-    image = Image.open(
-        image_path
-    ).convert(
-        "RGB"
-    )
-
-
-    # --------------------------------------------------------
-    # Transform image
-    # --------------------------------------------------------
-
-    image_tensor = transform(
-        image
-    )
-
-
-    # --------------------------------------------------------
-    # Add batch dimension
-    # --------------------------------------------------------
-
-    image_tensor = (
-        image_tensor
-        .unsqueeze(0)
-    )
-
-
-    # --------------------------------------------------------
-    # Move to device
-    # --------------------------------------------------------
-
-    image_tensor = (
-        image_tensor
-        .to(DEVICE)
-    )
-
-
-    # --------------------------------------------------------
-    # Prediction
-    # --------------------------------------------------------
-
-    with torch.no_grad():
-
-        output = model(
-            image_tensor
-        )
-
-
-        probabilities = torch.softmax(
-            output,
-            dim=1
-        )
-
-
-        confidence, predicted_index = (
-            torch.max(
-                probabilities,
-                dim=1
-            )
-        )
-
-
-    # --------------------------------------------------------
-    # Convert values
-    # --------------------------------------------------------
-
-    predicted_index = (
-        predicted_index.item()
-    )
-
-
-    confidence = (
-        confidence.item()
-        * 100
-    )
-
-
-    # --------------------------------------------------------
-    # Get class name
-    # --------------------------------------------------------
-
-    if (
-        0 <= predicted_index
-        < len(CLASS_NAMES)
-    ):
-
-        prediction = CLASS_NAMES[
-            predicted_index
-        ]
-
-    else:
-
-        prediction = "Unknown"
-
-
-    # --------------------------------------------------------
-    # Print result
-    # --------------------------------------------------------
-
-    print()
-    print(
-        "Prediction:",
-        prediction
-    )
-
-    print(
-        f"Confidence: "
-        f"{confidence:.2f}%"
-    )
-
-
-    return (
-        prediction,
-        confidence
     )
