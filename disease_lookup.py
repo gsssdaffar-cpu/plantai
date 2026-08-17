@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # ============================================================
 # PLANTAI DISEASE DATABASE
 # 38 PLANTVILLAGE CLASSES
@@ -991,103 +993,138 @@ DISEASE_DATABASE = {
 # LOOKUP FUNCTION
 # ============================================================
 
-# ============================================================
-# LOOKUP FUNCTION
-# ============================================================
-
 def get_disease(disease_name):
 
     if not disease_name:
+
+        print(
+            "WARNING: Empty disease name"
+        )
+
         return None
 
 
-    # --------------------------------------------------------
-    # 1. Exact match
-    # --------------------------------------------------------
-
-    if disease_name in DISEASE_DATABASE:
-
-        return DISEASE_DATABASE[disease_name]
+    original_name = str(
+        disease_name
+    ).strip()
 
 
-    # --------------------------------------------------------
-    # 2. Normalize names for comparison
-    # --------------------------------------------------------
+    print()
+    print("=" * 60)
+    print("DISEASE LOOKUP")
+    print("=" * 60)
+
+    print(
+        "Model prediction:",
+        repr(original_name)
+    )
+
+
+    # ========================================================
+    # NORMALIZE
+    # ========================================================
 
     def normalize(name):
 
-        name = name.strip()
+        name = str(
+            name
+        ).strip()
 
-        # Model uses:
-        # Corn___Disease
-        #
-        # Database uses:
-        # Corn_(maize)___Disease
+        # Remove duplicate spaces
+        name = " ".join(
+            name.split()
+        )
 
+        # Normalize Corn naming
         name = name.replace(
             "Corn_(maize)",
             "Corn"
         )
 
-        # Remove accidental trailing underscore
+        name = name.replace(
+            "Corn_(Maize)",
+            "Corn"
+        )
+
+        # Remove trailing underscore
         name = name.rstrip("_")
 
-        return name
+        return name.lower()
 
 
     normalized_prediction = normalize(
-        disease_name
+        original_name
     )
 
 
-    # --------------------------------------------------------
-    # 3. Search normalized database keys
-    # --------------------------------------------------------
+    print(
+        "Normalized prediction:",
+        repr(
+            normalized_prediction
+        )
+    )
+
+
+    # ========================================================
+    # EXACT / NORMALIZED MATCH
+    # ========================================================
 
     for key, value in DISEASE_DATABASE.items():
 
-        normalized_key = normalize(key)
+        if (
+            normalize(key)
+            ==
+            normalized_prediction
+        ):
 
-        if normalized_key == normalized_prediction:
+            print(
+                "MATCH:",
+                key
+            )
+
+            print("=" * 60)
 
             return value
 
 
-    # --------------------------------------------------------
-    # 4. Fallback:
-    #    Match plant + disease separately
-    # --------------------------------------------------------
+    # ========================================================
+    # PLANT + DISEASE MATCH
+    # ========================================================
 
-    if "___" in disease_name:
+    if "___" in original_name:
 
         prediction_plant, prediction_disease = (
-            disease_name.split(
+            original_name.split(
                 "___",
                 1
             )
         )
 
-        prediction_plant = (
+
+        prediction_plant = normalize(
             prediction_plant
-            .replace(
-                "_(maize)",
-                ""
-            )
-            .strip()
-            .lower()
         )
 
-        prediction_disease = (
+        prediction_disease = normalize(
             prediction_disease
-            .rstrip("_")
-            .strip()
-            .lower()
+        )
+
+
+        print(
+            "Prediction plant:",
+            prediction_plant
+        )
+
+        print(
+            "Prediction disease:",
+            prediction_disease
         )
 
 
         for key, value in DISEASE_DATABASE.items():
 
             if "___" not in key:
+
                 continue
 
 
@@ -1099,42 +1136,126 @@ def get_disease(disease_name):
             )
 
 
-            database_plant = (
+            database_plant = normalize(
                 database_plant
-                .replace(
-                    "_(maize)",
-                    ""
-                )
-                .strip()
-                .lower()
             )
 
-            database_disease = (
+            database_disease = normalize(
                 database_disease
-                .rstrip("_")
-                .strip()
-                .lower()
             )
 
 
             if (
                 prediction_plant
-                == database_plant
+                ==
+                database_plant
                 and
                 prediction_disease
-                == database_disease
+                ==
+                database_disease
             ):
+
+                print(
+                    "MATCH:",
+                    key
+                )
+
+                print("=" * 60)
 
                 return value
 
 
-    # --------------------------------------------------------
-    # 5. No match
-    # --------------------------------------------------------
+    # ========================================================
+    # SPECIAL CORN MATCHING
+    # ========================================================
+
+    prediction_clean = (
+        normalized_prediction
+        .replace(
+            "corn_(maize)",
+            "corn"
+        )
+    )
+
+
+    for key, value in DISEASE_DATABASE.items():
+
+        key_clean = normalize(
+            key
+        )
+
+        key_clean = (
+            key_clean
+            .replace(
+                "corn_(maize)",
+                "corn"
+            )
+        )
+
+
+        if (
+            key_clean
+            ==
+            prediction_clean
+        ):
+
+            print(
+                "MATCH AFTER CORN NORMALIZATION:",
+                key
+            )
+
+            print("=" * 60)
+
+            return value
+
+
+    # ========================================================
+    # PARTIAL MATCH
+    # ========================================================
+
+    for key, value in DISEASE_DATABASE.items():
+
+        key_normalized = normalize(
+            key
+        )
+
+
+        if (
+            normalized_prediction
+            in key_normalized
+            or
+            key_normalized
+            in normalized_prediction
+        ):
+
+            print(
+                "PARTIAL MATCH:",
+                key
+            )
+
+            print("=" * 60)
+
+            return value
+
+
+    # ========================================================
+    # NO MATCH
+    # ========================================================
 
     print(
-        "WARNING: Disease not found in database:",
-        disease_name
+        "WARNING: Disease not found in database:"
     )
+
+    print(
+        repr(original_name)
+    )
+
+    print(
+        "Available database entries:",
+        len(DISEASE_DATABASE)
+    )
+
+    print("=" * 60)
+
 
     return None
