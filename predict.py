@@ -1,7 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 
 from pathlib import Path
-import time
+import gc
 
 import torch
 from torchvision import models, transforms
@@ -12,8 +12,8 @@ from PIL import Image
 # DEVICE
 # ============================================================
 
-# Render normally runs CPU.
-# Force CPU unless CUDA is genuinely available.
+# Render normally runs without CUDA.
+# Force CPU when CUDA is unavailable.
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
@@ -22,22 +22,23 @@ print("Using device:", DEVICE)
 
 
 # ============================================================
-# CPU THREAD LIMIT
+# CPU MEMORY OPTIMIZATION
 # ============================================================
 
-# Prevent PyTorch from creating too many CPU threads
-# on a small Render instance.
+# These settings help reduce unnecessary CPU threading/memory.
+# Only configure threads when running on CPU.
 
 if DEVICE.type == "cpu":
 
-    torch.set_num_threads(1)
+    try:
+        torch.set_num_threads(1)
+    except Exception:
+        pass
 
     try:
         torch.set_num_interop_threads(1)
-    except RuntimeError:
+    except Exception:
         pass
-
-    print("PyTorch CPU threads:", torch.get_num_threads())
 
 
 # ============================================================
@@ -66,8 +67,10 @@ CLASS_NAMES_PATH = (
 if not MODEL_PATH.exists():
 
     raise FileNotFoundError(
-        f"\nModel file not found:\n"
-        f"{MODEL_PATH}"
+        "\nModel file not found:\n"
+        f"{MODEL_PATH}\n\n"
+        "Expected location:\n"
+        f"{BASE_DIR / 'models'}"
     )
 
 
@@ -97,6 +100,7 @@ transform = transforms.Compose([
             0.225
         ]
     )
+
 ])
 
 
@@ -109,17 +113,15 @@ print("=" * 60)
 print("Loading PlantAI model...")
 print("=" * 60)
 
-load_start = time.perf_counter()
 
 checkpoint = torch.load(
-    MODEL_PATH,
-    map_location="cpu",
-    weights_only=False
-)
 
-print(
-    f"Checkpoint loaded in "
-    f"{time.perf_counter() - load_start:.2f} seconds"
+    MODEL_PATH,
+
+    map_location="cpu",
+
+    weights_only=False
+
 )
 
 
@@ -170,9 +172,13 @@ if (
 elif CLASS_NAMES_PATH.exists():
 
     CLASS_NAMES = torch.load(
+
         CLASS_NAMES_PATH,
+
         map_location="cpu",
+
         weights_only=False
+
     )
 
     print(
@@ -182,8 +188,27 @@ elif CLASS_NAMES_PATH.exists():
 else:
 
     raise FileNotFoundError(
-        "\nClass names not found:\n"
+
+        "\nClass names not found.\n"
+
+        "Expected:\n"
+
         f"{CLASS_NAMES_PATH}"
+
+    )
+
+
+# ============================================================
+# ENSURE CLASS NAMES ARE A LIST
+# ============================================================
+
+if isinstance(
+    CLASS_NAMES,
+    tuple
+):
+
+    CLASS_NAMES = list(
+        CLASS_NAMES
     )
 
 
@@ -195,36 +220,63 @@ NUM_CLASSES = len(
     CLASS_NAMES
 )
 
+
 print(
     "Prediction classes:",
     NUM_CLASSES
 )
 
+
 if NUM_CLASSES != 38:
 
     raise RuntimeError(
-        f"Expected 38 classes, "
-        f"but found {NUM_CLASSES}"
+
+        f"\nExpected 38 classes, "
+        f"but found {NUM_CLASSES}."
+
     )
 
 
 # ============================================================
-# CREATE EFFICIENTNET-B0
+# PRINT CLASS MAPPING
+# ============================================================
+
+print()
+print("Class mapping:")
+
+for index, class_name in enumerate(
+    CLASS_NAMES
+):
+
+    print(
+        f"{index:02d} : {class_name}"
+    )
+
+
+# ============================================================
+# CREATE MODEL
 # ============================================================
 
 def create_model():
 
     model = models.efficientnet_b0(
+
         weights=None
+
     )
 
     input_features = (
         model.classifier[1].in_features
     )
 
-    model.classifier[1] = torch.nn.Linear(
-        input_features,
-        NUM_CLASSES
+    model.classifier[1] = (
+        torch.nn.Linear(
+
+            input_features,
+
+            NUM_CLASSES
+
+        )
     )
 
     return model
@@ -243,37 +295,83 @@ model = create_model()
 
 clean_state_dict = {}
 
+
 for key, value in state_dict.items():
 
-    if key.startswith("module."):
+    # Remove DataParallel prefix
+
+    if key.startswith(
+        "module."
+    ):
 
         key = key[
             len("module.") :
         ]
 
-    if key.startswith("model."):
+
+    # Remove model prefix
+
+    if key.startswith(
+        "model."
+    ):
 
         key = key[
             len("model.") :
         ]
 
-    clean_state_dict[key] = value
+
+    clean_state_dict[
+        key
+    ] = value
+
+
+# ============================================================
+# RELEASE CHECKPOINT REFERENCES
+# ============================================================
+
+# We no longer need the original checkpoint
+# after extracting the weights and classes.
+
+del checkpoint
+del state_dict
+
+gc.collect()
 
 
 # ============================================================
 # LOAD WEIGHTS
 # ============================================================
 
-print("Loading model weights...")
+try:
 
-model.load_state_dict(
-    clean_state_dict,
-    strict=True
-)
+    model.load_state_dict(
+
+        clean_state_dict,
+
+        strict=True
+
+    )
+
+except RuntimeError as e:
+
+    print()
+    print("=" * 60)
+    print("MODEL LOADING ERROR")
+    print("=" * 60)
+    print(e)
+    print("=" * 60)
+
+    raise
+
+
+# Release temporary state dictionary
+del clean_state_dict
+
+gc.collect()
 
 
 # ============================================================
-# MOVE MODEL
+# MOVE MODEL TO DEVICE
 # ============================================================
 
 model = model.to(
@@ -289,57 +387,46 @@ model.eval()
 
 
 # ============================================================
-# OPTIONAL MODEL INFORMATION
+# DISABLE GRADIENTS FOR MODEL
 # ============================================================
 
-if isinstance(checkpoint, dict):
+# The prediction endpoint never needs
+# gradients. This reduces memory usage.
 
-    if "best_accuracy" in checkpoint:
+for parameter in model.parameters():
 
-        try:
-
-            print(
-                f"Best validation accuracy: "
-                f"{checkpoint['best_accuracy']:.2f}%"
-            )
-
-        except Exception:
-
-            pass
-
-    if "num_classes" in checkpoint:
-
-        print(
-            "Model classes:",
-            checkpoint["num_classes"]
-        )
+    parameter.requires_grad = False
 
 
 # ============================================================
-# CLEANUP CHECKPOINT
-# ============================================================
-
-# We don't need the complete checkpoint anymore.
-# Keeping it in memory can unnecessarily increase RAM usage.
-
-del checkpoint
-del state_dict
-del clean_state_dict
-
-if DEVICE.type == "cuda":
-
-    torch.cuda.empty_cache()
-
-
-# ============================================================
-# MODEL READY
+# MODEL INFORMATION
 # ============================================================
 
 print()
-print("✅ PlantAI prediction model loaded")
-print("Model:", MODEL_PATH)
-print("Device:", DEVICE)
-print("=" * 60)
+print(
+    "PlantAI model loaded successfully."
+)
+
+print(
+    "Model:",
+    "EfficientNet-B0"
+)
+
+print(
+    "Classes:",
+    NUM_CLASSES
+)
+
+print(
+    "Device:",
+    DEVICE
+)
+
+print(
+    "Model path:",
+    MODEL_PATH
+)
+
 print()
 
 
@@ -385,258 +472,352 @@ def predict_image(image_path):
         confidence
         top_predictions
         confidence_status
+
+    Example:
+
+        (
+            "Tomato___Early_blight",
+            91.42,
+            [
+                {
+                    "class_name": "Tomato___Early_blight",
+                    "confidence": 91.42,
+                    "index": 4
+                }
+            ],
+            "Likely diagnosis"
+        )
     """
 
-    prediction_start = time.perf_counter()
+    image = None
+    image_tensor = None
+    output = None
+    probabilities = None
+    top_probabilities = None
+    top_indices = None
 
 
-    # ========================================================
-    # LOAD IMAGE
-    # ========================================================
+    try:
 
-    image_start = time.perf_counter()
+        # ====================================================
+        # LOAD IMAGE
+        # ====================================================
 
-    with Image.open(image_path) as img:
-
-        image = img.convert("RGB")
-
-
-    print(
-        f"Image loaded in "
-        f"{time.perf_counter() - image_start:.3f}s"
-    )
+        image = Image.open(
+            image_path
+        ).convert(
+            "RGB"
+        )
 
 
-    # ========================================================
-    # TRANSFORM
-    # ========================================================
+        # ====================================================
+        # TRANSFORM IMAGE
+        # ====================================================
 
-    transform_start = time.perf_counter()
-
-    image_tensor = transform(
-        image
-    )
-
-    image_tensor = image_tensor.unsqueeze(
-        0
-    )
-
-    image_tensor = image_tensor.to(
-        DEVICE
-    )
+        image_tensor = transform(
+            image
+        )
 
 
-    print(
-        f"Image transformed in "
-        f"{time.perf_counter() - transform_start:.3f}s"
-    )
+        # ====================================================
+        # RELEASE PIL IMAGE
+        # ====================================================
+
+        # The tensor now contains the image data.
+
+        image.close()
+
+        image = None
 
 
-    # ========================================================
-    # INFERENCE
-    # ========================================================
+        # ====================================================
+        # ADD BATCH DIMENSION
+        # ====================================================
 
-    inference_start = time.perf_counter()
-
-    with torch.inference_mode():
-
-        output = model(
+        image_tensor = (
             image_tensor
+            .unsqueeze(0)
         )
 
-        probabilities = torch.softmax(
-            output,
-            dim=1
+
+        # ====================================================
+        # MOVE TO DEVICE
+        # ====================================================
+
+        image_tensor = (
+            image_tensor.to(
+                DEVICE
+            )
         )
 
-        top_probabilities, top_indices = torch.topk(
-            probabilities,
-            k=min(
+
+        # ====================================================
+        # PREDICTION
+        # ====================================================
+
+        with torch.inference_mode():
+
+            output = model(
+                image_tensor
+            )
+
+
+            probabilities = (
+                torch.softmax(
+                    output,
+                    dim=1
+                )
+            )
+
+
+            # =================================================
+            # TOP 5
+            # =================================================
+
+            top_k = min(
                 5,
-                len(CLASS_NAMES)
-            ),
-            dim=1
+                NUM_CLASSES
+            )
+
+
+            top_probabilities, top_indices = (
+                torch.topk(
+
+                    probabilities,
+
+                    k=top_k,
+
+                    dim=1
+
+                )
+            )
+
+
+            # =================================================
+            # COPY ONLY SMALL RESULTS TO CPU
+            # =================================================
+
+            top_probabilities_cpu = (
+                top_probabilities[0]
+                .detach()
+                .cpu()
+                .tolist()
+            )
+
+
+            top_indices_cpu = (
+                top_indices[0]
+                .detach()
+                .cpu()
+                .tolist()
+            )
+
+
+        # ====================================================
+        # CONVERT TOP 5
+        # ====================================================
+
+        top_predictions = []
+
+
+        for probability, index in zip(
+
+            top_probabilities_cpu,
+
+            top_indices_cpu
+
+        ):
+
+            confidence_value = (
+                float(probability)
+                * 100.0
+            )
+
+
+            class_name = CLASS_NAMES[
+                int(index)
+            ]
+
+
+            top_predictions.append({
+
+                "class_name":
+                    class_name,
+
+                "confidence":
+                    round(
+                        confidence_value,
+                        2
+                    ),
+
+                "index":
+                    int(index)
+
+            })
+
+
+        # ====================================================
+        # BEST PREDICTION
+        # ====================================================
+
+        prediction = (
+            top_predictions[0][
+                "class_name"
+            ]
         )
 
 
-    inference_time = (
-        time.perf_counter()
-        - inference_start
-    )
-
-
-    print(
-        f"Model inference time: "
-        f"{inference_time:.3f}s"
-    )
-
-
-    # ========================================================
-    # TOP 5
-    # ========================================================
-
-    top_predictions = []
-
-    for probability, index in zip(
-        top_probabilities[0],
-        top_indices[0]
-    ):
-
-        index = index.item()
-
-        confidence_value = (
-            probability.item()
-            * 100
+        confidence = (
+            top_predictions[0][
+                "confidence"
+            ]
         )
 
-        class_name = CLASS_NAMES[
-            index
-        ]
 
-        top_predictions.append({
+        # ====================================================
+        # CONFIDENCE STATUS
+        # ====================================================
 
-            "class_name":
-                class_name,
+        if confidence < 40:
 
-            "confidence":
-                round(
-                    confidence_value,
-                    2
-                ),
+            confidence_status = (
+                "Unknown"
+            )
 
-            "index":
-                index
+        elif confidence < 60:
 
-        })
+            confidence_status = (
+                "Low confidence"
+            )
 
+        elif confidence < 80:
 
-    # ========================================================
-    # BEST PREDICTION
-    # ========================================================
+            confidence_status = (
+                "Possible diagnosis"
+            )
 
-    prediction = (
-        top_predictions[0]["class_name"]
-    )
+        elif confidence < 95:
 
-    confidence = (
-        top_predictions[0]["confidence"]
-    )
+            confidence_status = (
+                "Likely diagnosis"
+            )
 
+        else:
 
-    # ========================================================
-    # CONFIDENCE STATUS
-    # ========================================================
-
-    if confidence < 40:
-
-        confidence_status = "Unknown"
-
-    elif confidence < 60:
-
-        confidence_status = "Low confidence"
-
-    elif confidence < 80:
-
-        confidence_status = "Possible diagnosis"
-
-    elif confidence < 95:
-
-        confidence_status = "Likely diagnosis"
-
-    else:
-
-        confidence_status = "High confidence"
+            confidence_status = (
+                "High confidence"
+            )
 
 
-    # ========================================================
-    # CLEAN TENSORS
-    # ========================================================
+        # ====================================================
+        # PRINT RESULT
+        # ====================================================
 
-    del image_tensor
-    del output
-    del probabilities
-    del top_probabilities
-    del top_indices
-
-    if DEVICE.type == "cuda":
-
-        torch.cuda.empty_cache()
-
-
-    # ========================================================
-    # TIMING
-    # ========================================================
-
-    total_time = (
-        time.perf_counter()
-        - prediction_start
-    )
-
-
-    # ========================================================
-    # RESULT LOG
-    # ========================================================
-
-    print()
-    print("=" * 60)
-    print("🌱 PLANTAI PREDICTION")
-    print("=" * 60)
-
-    print(
-        "Prediction:",
-        prediction
-    )
-
-    print(
-        f"Confidence: "
-        f"{confidence:.2f}%"
-    )
-
-    print(
-        "Status:",
-        confidence_status
-    )
-
-    print(
-        f"Inference: "
-        f"{inference_time:.3f}s"
-    )
-
-    print(
-        f"Total prediction time: "
-        f"{total_time:.3f}s"
-    )
-
-    print()
-    print("Top 5 predictions:")
-
-    for i, item in enumerate(
-        top_predictions,
-        start=1
-    ):
+        print()
+        print("=" * 60)
+        print("PLANTAI PREDICTION")
+        print("=" * 60)
 
         print(
-            f"{i}. "
-            f"{item['class_name']} "
-            f"({item['confidence']:.2f}%)"
+            "Prediction:",
+            prediction
         )
 
-    print("=" * 60)
-    print()
+        print(
+            f"Confidence: "
+            f"{confidence:.2f}%"
+        )
+
+        print(
+            "Status:",
+            confidence_status
+        )
+
+        print()
+        print(
+            "Top 5 predictions:"
+        )
 
 
-    # ========================================================
-    # RETURN
-    # ========================================================
+        for i, item in enumerate(
 
-    return (
+            top_predictions,
 
-        prediction,
+            start=1
 
-        confidence,
+        ):
 
-        top_predictions,
+            print(
 
-        confidence_status
+                f"{i}. "
+                f"{item['class_name']} "
+                f"({item['confidence']:.2f}%)"
 
-    )
+            )
+
+
+        print("=" * 60)
+        print()
+
+
+        # ====================================================
+        # RETURN
+        # ====================================================
+
+        return (
+
+            prediction,
+
+            confidence,
+
+            top_predictions,
+
+            confidence_status
+
+        )
+
+
+    finally:
+
+        # ====================================================
+        # MEMORY CLEANUP
+        # ====================================================
+
+        # Important for Render's 512 MB limit.
+
+        try:
+
+            if image is not None:
+
+                image.close()
+
+        except Exception:
+
+            pass
+
+
+        # Delete temporary tensors.
+
+        image_tensor = None
+        output = None
+        probabilities = None
+        top_probabilities = None
+        top_indices = None
+
+
+        # Python garbage collection.
+
+        gc.collect()
+
+
+        # CUDA cleanup only when CUDA exists.
+
+        if DEVICE.type == "cuda":
+
+            try:
+
+                torch.cuda.empty_cache()
+
+            except Exception:
+
+                pass
