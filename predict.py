@@ -5,18 +5,28 @@
 PlantAI Prediction Engine
 ============================================================
 
-Render optimized prediction engine.
+Render / 512 MB optimized version.
 
 Features:
     - EfficientNet-B0
     - 38 plant disease classes
-    - One model only
-    - CPU compatible
+    - One prediction model
+    - CPU optimized
     - Memory optimized
-    - Top predictions
+    - Top 5 predictions
     - Confidence status
     - No Grad-CAM
+    - No attention model
     - No second AI model
+    - Aggressive temporary memory cleanup
+
+IMPORTANT:
+    app.py expects these functions:
+
+        predict_image()
+        get_model()
+        get_transform()
+        cleanup()
 ============================================================
 """
 
@@ -29,23 +39,45 @@ from PIL import Image
 
 
 # ============================================================
-# DEVICE
+# CPU / DEVICE CONFIGURATION
 # ============================================================
+
+# Render free instances are CPU based.
+# Limiting threads reduces memory usage and CPU contention.
+
+try:
+    torch.set_num_threads(1)
+except Exception:
+    pass
+
+try:
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
 
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
 
+print("=" * 60)
+print("PlantAI Prediction Engine")
+print("=" * 60)
 print("Using device:", DEVICE)
 
 
 # ============================================================
-# PATHS
+# BASE DIRECTORY
 # ============================================================
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
+
+
+# ============================================================
+# MODEL PATH
+# ============================================================
 
 MODEL_PATH = os.path.join(
     BASE_DIR,
@@ -142,7 +174,7 @@ NUM_CLASSES = len(CLASS_NAMES)
 
 
 # ============================================================
-# MODEL
+# GLOBAL MODEL
 # ============================================================
 
 MODEL = None
@@ -180,7 +212,7 @@ TRANSFORM = transforms.Compose([
 
 
 # ============================================================
-# MODEL CREATION
+# CREATE MODEL
 # ============================================================
 
 def create_model():
@@ -193,17 +225,19 @@ def create_model():
         weights=None
     )
 
-    # Replace classifier
     model.classifier[1] = torch.nn.Linear(
+
         model.classifier[1].in_features,
+
         NUM_CLASSES
+
     )
 
     return model
 
 
 # ============================================================
-# CHECKPOINT EXTRACTION
+# EXTRACT STATE DICT
 # ============================================================
 
 def extract_state_dict(checkpoint):
@@ -217,15 +251,27 @@ def extract_state_dict(checkpoint):
         dict
     ):
 
+        # Common checkpoint format
+
         if "state_dict" in checkpoint:
 
             return checkpoint["state_dict"]
+
+
+        # Another common format
 
         if "model_state_dict" in checkpoint:
 
             return checkpoint[
                 "model_state_dict"
             ]
+
+
+        # Sometimes saved as:
+        #
+        # {
+        #     "model": state_dict
+        # }
 
         if "model" in checkpoint:
 
@@ -239,30 +285,25 @@ def extract_state_dict(checkpoint):
                 return model_value
 
 
-        # Check if this itself looks like state_dict
-        keys = list(
-            checkpoint.keys()
-        )
+        # Check whether checkpoint itself
+        # looks like a state dictionary.
 
-        if keys:
+        tensor_count = 0
 
-            tensor_count = sum(
+        for value in checkpoint.values():
 
-                1
+            if torch.is_tensor(value):
 
-                for value in checkpoint.values()
+                tensor_count += 1
 
-                if torch.is_tensor(value)
 
-            )
+        if tensor_count > 0:
 
-            if tensor_count > 0:
-
-                return checkpoint
+            return checkpoint
 
 
     # --------------------------------------------------------
-    # Complete model
+    # Complete PyTorch model
     # --------------------------------------------------------
 
     if hasattr(
@@ -274,7 +315,8 @@ def extract_state_dict(checkpoint):
 
 
     raise RuntimeError(
-        "Could not find model state_dict in checkpoint."
+        "Could not find model state_dict "
+        "inside checkpoint."
     )
 
 
@@ -290,7 +332,9 @@ def clean_state_dict(state_dict):
 
         new_key = key
 
+
         # Remove DataParallel prefix
+
         if new_key.startswith(
             "module."
         ):
@@ -299,26 +343,30 @@ def clean_state_dict(state_dict):
                 len("module.") :
             ]
 
+
         cleaned[new_key] = value
+
 
     return cleaned
 
 
 # ============================================================
-# LOAD MODEL
+# LOAD CHECKPOINT
 # ============================================================
 
-def get_model():
+def load_checkpoint():
 
-    global MODEL
+    """
+    Loads checkpoint with Render-friendly settings.
 
-    if MODEL is not None:
+    mmap=True can reduce the temporary memory pressure
+    for compatible PyTorch checkpoint files.
 
-        return MODEL
-
+    Falls back automatically if mmap is unavailable.
+    """
 
     print(
-        "Loading PlantAI model..."
+        "Loading checkpoint..."
     )
 
     print(
@@ -333,7 +381,7 @@ def get_model():
 
         raise FileNotFoundError(
 
-            "Model file not found: "
+            "Model file not found:\n"
 
             + MODEL_PATH
 
@@ -341,14 +389,7 @@ def get_model():
 
 
     # --------------------------------------------------------
-    # Create architecture
-    # --------------------------------------------------------
-
-    model = create_model()
-
-
-    # --------------------------------------------------------
-    # Load checkpoint
+    # Try memory-mapped loading first
     # --------------------------------------------------------
 
     try:
@@ -357,7 +398,46 @@ def get_model():
 
             MODEL_PATH,
 
-            map_location=DEVICE,
+            map_location="cpu",
+
+            weights_only=False,
+
+            mmap=True
+
+        )
+
+        print(
+            "Checkpoint loaded using mmap."
+        )
+
+        return checkpoint
+
+
+    except TypeError:
+
+        # Older PyTorch versions don't support mmap
+        pass
+
+
+    except RuntimeError as e:
+
+        print(
+            "mmap loading unavailable:",
+            e
+        )
+
+
+    # --------------------------------------------------------
+    # Normal fallback
+    # --------------------------------------------------------
+
+    try:
+
+        checkpoint = torch.load(
+
+            MODEL_PATH,
+
+            map_location="cpu",
 
             weights_only=False
 
@@ -366,100 +446,51 @@ def get_model():
     except TypeError:
 
         # Older PyTorch versions
+
         checkpoint = torch.load(
 
             MODEL_PATH,
 
-            map_location=DEVICE
+            map_location="cpu"
 
         )
-
-
-    # --------------------------------------------------------
-    # Extract weights
-    # --------------------------------------------------------
-
-    state_dict = extract_state_dict(
-        checkpoint
-    )
-
-    state_dict = clean_state_dict(
-        state_dict
-    )
-
-
-    # --------------------------------------------------------
-    # Load weights
-    # --------------------------------------------------------
-
-    try:
-
-        model.load_state_dict(
-            state_dict,
-            strict=True
-        )
-
-    except RuntimeError as e:
-
-        print(
-            "Strict model loading failed."
-        )
-
-        print(
-            "Trying compatible loading..."
-        )
-
-        result = model.load_state_dict(
-            state_dict,
-            strict=False
-        )
-
-        print(
-            "Missing keys:",
-            result.missing_keys
-        )
-
-        print(
-            "Unexpected keys:",
-            result.unexpected_keys
-        )
-
-        if len(result.missing_keys) > 0:
-
-            raise RuntimeError(
-
-                "Model checkpoint does not match "
-                "EfficientNet-B0 38-class architecture.\n"
-                + str(e)
-
-            )
-
-
-    # --------------------------------------------------------
-    # Evaluation mode
-    # --------------------------------------------------------
-
-    model.eval()
-
-
-    # --------------------------------------------------------
-    # Device
-    # --------------------------------------------------------
-
-    model.to(
-        DEVICE
-    )
-
-
-    # --------------------------------------------------------
-    # Store globally
-    # --------------------------------------------------------
-
-    MODEL = model
 
 
     print(
-        "PlantAI model loaded successfully."
+        "Checkpoint loaded."
+    )
+
+
+    return checkpoint
+
+
+# ============================================================
+# GET MODEL
+# ============================================================
+
+def get_model():
+
+    global MODEL
+
+
+    # --------------------------------------------------------
+    # Already loaded
+    # --------------------------------------------------------
+
+    if MODEL is not None:
+
+        return MODEL
+
+
+    print("=" * 60)
+
+    print(
+        "Loading PlantAI model..."
+    )
+
+    print(
+        "Device:",
+        DEVICE
     )
 
     print(
@@ -468,12 +499,235 @@ def get_model():
     )
 
     print(
-        "Device:",
-        DEVICE
+        "Model:",
+        MODEL_PATH
     )
 
+    print("=" * 60)
 
-    return MODEL
+
+    # --------------------------------------------------------
+    # Verify model
+    # --------------------------------------------------------
+
+    if not os.path.exists(
+        MODEL_PATH
+    ):
+
+        raise FileNotFoundError(
+
+            "PlantAI model file not found:\n"
+
+            + MODEL_PATH
+
+        )
+
+
+    checkpoint = None
+
+    state_dict = None
+
+    model = None
+
+
+    try:
+
+        # ====================================================
+        # CREATE ARCHITECTURE
+        # ====================================================
+
+        model = create_model()
+
+
+        # ====================================================
+        # LOAD CHECKPOINT
+        # ====================================================
+
+        checkpoint = load_checkpoint()
+
+
+        # ====================================================
+        # EXTRACT STATE DICT
+        # ====================================================
+
+        state_dict = extract_state_dict(
+            checkpoint
+        )
+
+
+        # ====================================================
+        # CLEAN KEYS
+        # ====================================================
+
+        state_dict = clean_state_dict(
+            state_dict
+        )
+
+
+        # ====================================================
+        # LOAD MODEL WEIGHTS
+        # ====================================================
+
+        try:
+
+            model.load_state_dict(
+
+                state_dict,
+
+                strict=True
+
+            )
+
+            print(
+                "Strict model loading successful."
+            )
+
+
+        except RuntimeError as strict_error:
+
+            print(
+                "Strict loading failed."
+            )
+
+            print(
+                "Trying compatible loading..."
+            )
+
+
+            result = model.load_state_dict(
+
+                state_dict,
+
+                strict=False
+
+            )
+
+
+            print(
+                "Missing keys:",
+                result.missing_keys
+            )
+
+            print(
+                "Unexpected keys:",
+                result.unexpected_keys
+            )
+
+
+            # If important model weights are missing,
+            # do not continue with an invalid model.
+
+            if len(
+                result.missing_keys
+            ) > 0:
+
+                raise RuntimeError(
+
+                    "PlantAI model checkpoint does not "
+                    "match EfficientNet-B0 38-class model.\n\n"
+
+                    + str(strict_error)
+
+                )
+
+
+        # ====================================================
+        # IMMEDIATELY RELEASE CHECKPOINT
+        # ====================================================
+
+        checkpoint = None
+
+        state_dict = None
+
+        gc.collect()
+
+
+        # ====================================================
+        # CPU MODEL
+        # ====================================================
+
+        model.to(
+            DEVICE
+        )
+
+
+        # ====================================================
+        # EVALUATION MODE
+        # ====================================================
+
+        model.eval()
+
+
+        # ====================================================
+        # SAVE GLOBAL MODEL
+        # ====================================================
+
+        MODEL = model
+
+        model = None
+
+
+        print("=" * 60)
+
+        print(
+            "PlantAI model loaded successfully."
+        )
+
+        print(
+            "Device:",
+            DEVICE
+        )
+
+        print(
+            "Classes:",
+            NUM_CLASSES
+        )
+
+        print("=" * 60)
+
+
+        return MODEL
+
+
+    except Exception:
+
+        print(
+            "MODEL LOAD FAILED"
+        )
+
+
+        traceback_message = None
+
+        try:
+
+            import traceback
+
+            traceback_message = traceback.format_exc()
+
+        except Exception:
+
+            pass
+
+
+        if traceback_message:
+
+            print(
+                traceback_message
+            )
+
+
+        # Release temporary objects
+
+        checkpoint = None
+
+        state_dict = None
+
+        model = None
+
+        gc.collect()
+
+
+        raise
 
 
 # ============================================================
@@ -486,7 +740,7 @@ def get_transform():
 
 
 # ============================================================
-# FORMAT CLASS NAME
+# FORMAT PREDICTION NAME
 # ============================================================
 
 def format_prediction_name(
@@ -498,7 +752,10 @@ def format_prediction_name(
         return "Unknown"
 
 
-    # Split plant / disease
+    # --------------------------------------------------------
+    # Separate plant and disease
+    # --------------------------------------------------------
+
     if "___" in class_name:
 
         plant, disease = class_name.split(
@@ -513,27 +770,38 @@ def format_prediction_name(
         disease = class_name
 
 
+    # --------------------------------------------------------
     # Clean plant name
+    # --------------------------------------------------------
+
     plant = plant.replace(
         "_",
         " "
     )
+
 
     plant = plant.replace(
         ",",
         ", "
     )
 
+
+    # --------------------------------------------------------
     # Clean disease name
+    # --------------------------------------------------------
+
     disease = disease.replace(
         "_",
         " "
     )
 
-    disease = disease.replace(
-        "  ",
-        " "
-    )
+
+    while "  " in disease:
+
+        disease = disease.replace(
+            "  ",
+            " "
+        )
 
 
     return (
@@ -555,46 +823,74 @@ def get_confidence_status(
     confidence
 ):
 
+    confidence = float(
+        confidence
+    )
+
+
     if confidence >= 85:
 
         return "Very High Confidence"
+
 
     if confidence >= 70:
 
         return "High Confidence"
 
+
     if confidence >= 55:
 
         return "Moderate Confidence"
+
 
     if confidence >= 40:
 
         return "Low Confidence"
 
+
     return "Very Low Confidence"
 
 
 # ============================================================
-# PREDICTION
+# PREDICT IMAGE
 # ============================================================
 
 def predict_image(
     image_path
 ):
 
+    """
+    Predict plant disease.
+
+    Returns:
+
+        prediction
+        confidence
+        top_predictions
+        confidence_status
+    """
+
+    # ========================================================
+    # GET SINGLE GLOBAL MODEL
+    # ========================================================
+
     model = get_model()
 
 
-    # --------------------------------------------------------
-    # Validate image
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE FILE
+    # ========================================================
 
     if not os.path.exists(
         image_path
     ):
 
         raise FileNotFoundError(
-            f"Image not found: {image_path}"
+
+            "Image not found: "
+
+            + str(image_path)
+
         )
 
 
@@ -602,14 +898,20 @@ def predict_image(
 
     tensor = None
 
+    outputs = None
+
     probabilities = None
+
+    values = None
+
+    indices = None
 
 
     try:
 
-        # ----------------------------------------------------
-        # Open image
-        # ----------------------------------------------------
+        # ====================================================
+        # OPEN IMAGE
+        # ====================================================
 
         image = Image.open(
             image_path
@@ -618,13 +920,16 @@ def predict_image(
         )
 
 
-        # ----------------------------------------------------
-        # Transform
-        # ----------------------------------------------------
+        # ====================================================
+        # RESIZE / TRANSFORM
+        # ====================================================
 
         tensor = TRANSFORM(
             image
-        ).unsqueeze(
+        )
+
+
+        tensor = tensor.unsqueeze(
             0
         )
 
@@ -634,9 +939,9 @@ def predict_image(
         )
 
 
-        # ----------------------------------------------------
-        # Prediction
-        # ----------------------------------------------------
+        # ====================================================
+        # INFERENCE
+        # ====================================================
 
         with torch.inference_mode():
 
@@ -644,51 +949,78 @@ def predict_image(
                 tensor
             )
 
+
             probabilities = torch.softmax(
+
                 outputs,
+
                 dim=1
+
             )
 
 
-        # ----------------------------------------------------
-        # Top predictions
-        # ----------------------------------------------------
+            # =================================================
+            # TOP 5
+            # =================================================
 
-        top_count = min(
-            5,
-            NUM_CLASSES
+            top_count = min(
+                5,
+                NUM_CLASSES
+            )
+
+
+            values, indices = torch.topk(
+
+                probabilities,
+
+                top_count,
+
+                dim=1
+
+            )
+
+
+        # ====================================================
+        # MOVE ONLY TOP RESULTS TO CPU
+        # ====================================================
+
+        values_cpu = (
+
+            values[0]
+            .detach()
+            .cpu()
+            .tolist()
+
         )
 
 
-        values, indices = torch.topk(
+        indices_cpu = (
 
-            probabilities,
-
-            top_count,
-
-            dim=1
+            indices[0]
+            .detach()
+            .cpu()
+            .tolist()
 
         )
 
 
-        values = values[
-            0
-        ].detach().cpu().tolist()
+        # ====================================================
+        # BEST PREDICTION
+        # ====================================================
 
+        best_index = int(
+            indices_cpu[0]
+        )
 
-        indices = indices[
-            0
-        ].detach().cpu().tolist()
-
-
-        # ----------------------------------------------------
-        # Best prediction
-        # ----------------------------------------------------
-
-        best_index = indices[0]
 
         confidence = (
-            values[0] * 100.0
+
+            float(
+                values_cpu[0]
+            )
+
+            * 100.0
+
         )
 
 
@@ -702,24 +1034,35 @@ def predict_image(
         )
 
 
-        # ----------------------------------------------------
-        # Top prediction list
-        # ----------------------------------------------------
+        # ====================================================
+        # TOP PREDICTIONS
+        # ====================================================
 
         top_predictions = []
 
 
         for value, index in zip(
-            values,
-            indices
+
+            values_cpu,
+
+            indices_cpu
+
         ):
+
+            index = int(
+                index
+            )
+
 
             raw_name = CLASS_NAMES[
                 index
             ]
 
-            formatted_name = format_prediction_name(
-                raw_name
+
+            formatted_name = (
+                format_prediction_name(
+                    raw_name
+                )
             )
 
 
@@ -733,29 +1076,40 @@ def predict_image(
 
                 "confidence":
                     round(
-                        value * 100.0,
+
+                        float(value)
+                        * 100.0,
+
                         2
+
                     )
 
             })
 
 
-        # ----------------------------------------------------
-        # Confidence status
-        # ----------------------------------------------------
+        # ====================================================
+        # CONFIDENCE STATUS
+        # ====================================================
 
-        confidence_status = get_confidence_status(
-            confidence
+        confidence_status = (
+            get_confidence_status(
+                confidence
+            )
         )
 
 
+        # ====================================================
+        # LOG RESULT
+        # ====================================================
+
+        print()
         print(
             "Prediction:",
             prediction
         )
 
         print(
-            "Confidence:",
+            f"Confidence: "
             f"{confidence:.2f}%"
         )
 
@@ -764,10 +1118,15 @@ def predict_image(
             confidence_status
         )
 
+        print(
+            "Top predictions:",
+            top_predictions
+        )
 
-        # ----------------------------------------------------
-        # Return
-        # ----------------------------------------------------
+
+        # ====================================================
+        # RETURN
+        # ====================================================
 
         return (
 
@@ -786,42 +1145,33 @@ def predict_image(
 
     finally:
 
-        # ----------------------------------------------------
-        # Cleanup
-        # ----------------------------------------------------
+        # ====================================================
+        # RELEASE TEMPORARY PYTORCH OBJECTS
+        # ====================================================
 
         image = None
 
         tensor = None
 
+        outputs = None
+
         probabilities = None
 
-        try:
+        values = None
 
-            del outputs
+        indices = None
 
-        except Exception:
 
-            pass
-
-        try:
-
-            del values
-
-        except Exception:
-
-            pass
-
-        try:
-
-            del indices
-
-        except Exception:
-
-            pass
+        # ====================================================
+        # GARBAGE COLLECTION
+        # ====================================================
 
         gc.collect()
 
+
+        # ====================================================
+        # CUDA CLEANUP
+        # ====================================================
 
         if DEVICE.type == "cuda":
 
@@ -840,6 +1190,16 @@ def predict_image(
 
 def cleanup():
 
+    """
+    Cleanup temporary memory.
+
+    IMPORTANT:
+    We intentionally DO NOT delete MODEL.
+
+    The model is kept globally so Render does not have
+    to reload EfficientNet for every request.
+    """
+
     gc.collect()
 
 
@@ -855,6 +1215,15 @@ def cleanup():
 
 
 # ============================================================
+# MODEL STATUS
+# ============================================================
+
+def model_loaded():
+
+    return MODEL is not None
+
+
+# ============================================================
 # TEST
 # ============================================================
 
@@ -866,8 +1235,15 @@ if __name__ == "__main__":
     print("=" * 60)
 
     print(
-        "Model:",
+        "Model path:",
         MODEL_PATH
+    )
+
+    print(
+        "Model exists:",
+        os.path.exists(
+            MODEL_PATH
+        )
     )
 
     print(
@@ -880,10 +1256,36 @@ if __name__ == "__main__":
         DEVICE
     )
 
-    model = get_model()
-
     print(
-        "Model test successful."
+        "CPU threads:",
+        torch.get_num_threads()
     )
+
+
+    try:
+
+        model = get_model()
+
+        print()
+        print(
+            "MODEL TEST SUCCESSFUL"
+        )
+
+        print(
+            "Model loaded:",
+            model is not None
+        )
+
+    except Exception as e:
+
+        print()
+        print(
+            "MODEL TEST FAILED"
+        )
+
+        print(
+            str(e)
+        )
+
 
     print("=" * 60)

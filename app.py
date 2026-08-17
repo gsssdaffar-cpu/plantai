@@ -5,16 +5,18 @@
 PlantAI Flask Application
 ============================================================
 
-Render 512 MB optimized version.
+Render optimized PlantAI application.
 
 Features:
-    - Plant disease prediction
-    - Disease information
-    - Severity estimation
-    - Leaf affected area
-    - AI explanation
+    - EfficientNet prediction through predict.py
+    - 38 plant disease classes
     - AI Highlight ENABLED
     - AI Attention Map DISABLED
+    - Lightweight OpenCV highlight
+    - Severity estimation
+    - Disease information
+    - AI explanation
+    - Severity advice
     - PDF report
     - Prediction history
     - Dashboard
@@ -22,12 +24,13 @@ Features:
     - Mobile API
 
 IMPORTANT:
-    - predict.py contains ONE EfficientNet-B0 model
-    - No pytorch-grad-cam
-    - No second AI model
-    - AI Highlight uses lightweight OpenCV
-    - AI Attention Map is disabled
-    - Aggressive cleanup is used
+    - Only ONE PyTorch model is loaded.
+    - No Grad-CAM.
+    - No second AI model.
+    - Attention map is completely disabled.
+    - Highlight uses lightweight OpenCV processing.
+    - Severity uses severity.py.
+    - Designed for low-memory Render deployment.
 ============================================================
 """
 
@@ -98,7 +101,7 @@ from explanation import (
 
 
 # ============================================================
-# FLASK
+# FLASK APP
 # ============================================================
 
 app = Flask(__name__)
@@ -122,14 +125,11 @@ UPLOAD_FOLDER = os.path.join(
     "uploads"
 )
 
-
-app.config["UPLOAD_FOLDER"] = (
-    UPLOAD_FOLDER
-)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 
 # ============================================================
-# MAX UPLOAD
+# MAXIMUM UPLOAD SIZE
 # ============================================================
 
 app.config["MAX_CONTENT_LENGTH"] = (
@@ -148,21 +148,19 @@ os.makedirs(
 
 
 # ============================================================
-# ALLOWED EXTENSIONS
+# ALLOWED IMAGE TYPES
 # ============================================================
 
 ALLOWED_EXTENSIONS = {
-
     "jpg",
     "jpeg",
     "png",
     "webp"
-
 }
 
 
 # ============================================================
-# DATABASE
+# DATABASE INITIALIZATION
 # ============================================================
 
 try:
@@ -170,7 +168,7 @@ try:
     create_tables()
 
     print(
-        "Database tables initialized."
+        "Database tables initialized successfully."
     )
 
 except Exception as e:
@@ -180,17 +178,13 @@ except Exception as e:
         e
     )
 
-    traceback.print_exc()
-
 
 # ============================================================
-# MODEL
+# MODEL INITIALIZATION
 # ============================================================
 
 MODEL = None
-
 TRANSFORM = None
-
 
 try:
 
@@ -211,28 +205,18 @@ except Exception as e:
 
     traceback.print_exc()
 
-    MODEL = None
-
-    TRANSFORM = None
-
 
 # ============================================================
-# ALLOWED FILE
+# UTILITY
 # ============================================================
 
-def allowed_file(
-    filename
-):
+def allowed_file(filename):
 
     if not filename:
-
         return False
-
 
     if "." not in filename:
-
         return False
-
 
     extension = (
         filename
@@ -240,14 +224,11 @@ def allowed_file(
         .lower()
     )
 
-
-    return (
-        extension in ALLOWED_EXTENSIONS
-    )
+    return extension in ALLOWED_EXTENSIONS
 
 
 # ============================================================
-# CLEANUP
+# MEMORY CLEANUP
 # ============================================================
 
 def safe_cleanup():
@@ -259,10 +240,9 @@ def safe_cleanup():
     except Exception as e:
 
         print(
-            "Cleanup warning:",
+            "Prediction cleanup warning:",
             e
         )
-
 
     try:
 
@@ -274,7 +254,7 @@ def safe_cleanup():
 
 
 # ============================================================
-# UNIQUE FILE NAME
+# CREATE UNIQUE FILE NAME
 # ============================================================
 
 def create_unique_filename(
@@ -285,20 +265,14 @@ def create_unique_filename(
         original_filename
     )
 
-
     if not safe_name:
 
-        safe_name = "image.jpg"
-
+        safe_name = "plant.jpg"
 
     unique_id = uuid.uuid4().hex[:12]
 
-
     return (
-
-        f"{unique_id}_"
-        f"{safe_name}"
-
+        f"{unique_id}_{safe_name}"
     )
 
 
@@ -349,7 +323,7 @@ def home():
 
 
 # ============================================================
-# HEALTH
+# HEALTH CHECK
 # ============================================================
 
 @app.route("/health")
@@ -357,26 +331,24 @@ def health():
 
     return jsonify({
 
-        "status":
-            "ok",
+        "status": "ok",
 
-        "service":
-            "PlantAI",
+        "service": "PlantAI",
 
         "model_loaded":
             MODEL is not None,
-
-        "model":
-            "EfficientNet-B0",
-
-        "classes":
-            38,
 
         "ai_highlight":
             True,
 
         "ai_attention_map":
-            False
+            False,
+
+        "severity":
+            True,
+
+        "pdf_report":
+            True
 
     })
 
@@ -393,14 +365,12 @@ def chatbot():
 
     answer = ""
 
-
     if request.method == "POST":
 
         question = request.form.get(
             "question",
             ""
         ).strip()
-
 
         if question:
 
@@ -416,9 +386,6 @@ def chatbot():
                     "Chatbot error:",
                     e
                 )
-
-                traceback.print_exc()
-
 
                 answer = (
                     "Sorry, chatbot is "
@@ -448,20 +415,32 @@ def upload_page():
 
 
 # ============================================================
-# FALLBACK DISEASE INFO
+# FALLBACK DISEASE INFORMATION
 # ============================================================
 
 def fallback_disease_info(
     prediction
 ):
 
+    plant = "Unknown"
+
+    disease = prediction
+
+    # Try to recover plant name
+    if prediction and " - " in prediction:
+
+        plant = prediction.split(
+            " - ",
+            1
+        )[0].strip()
+
     return {
 
         "plant":
-            "Unknown",
+            plant,
 
         "disease":
-            prediction,
+            disease,
 
         "cause":
             "Information not available",
@@ -499,21 +478,24 @@ def fallback_disease_info(
 
 def calculate_severity(
     filepath,
-    prediction
+    prediction=None
 ):
 
-    severity_level = (
-        "Not calculated"
-    )
+    severity_level = "Not calculated"
 
-    affected_area = 0
+    affected_area = 0.0
 
-
-    # --------------------------------------------------------
-    # First attempt
-    # --------------------------------------------------------
 
     try:
+
+        # ----------------------------------------------------
+        # Current severity.py returns:
+        #
+        # {
+        #     "level": "Moderate",
+        #     "area": 27.75
+        # }
+        # ----------------------------------------------------
 
         result = estimate_severity(
             filepath
@@ -521,6 +503,38 @@ def calculate_severity(
 
 
         if isinstance(
+            result,
+            dict
+        ):
+
+            # IMPORTANT:
+            # Your severity.py uses "level"
+            # not "severity".
+
+            severity_level = result.get(
+                "level",
+                result.get(
+                    "severity",
+                    result.get(
+                        "severity_level",
+                        "Not calculated"
+                    )
+                )
+            )
+
+            affected_area = result.get(
+                "area",
+                result.get(
+                    "affected_area",
+                    result.get(
+                        "affected",
+                        0
+                    )
+                )
+            )
+
+
+        elif isinstance(
             result,
             tuple
         ):
@@ -534,35 +548,6 @@ def calculate_severity(
             elif len(result) == 1:
 
                 severity_level = result[0]
-
-
-        elif isinstance(
-            result,
-            dict
-        ):
-
-            severity_level = result.get(
-
-                "severity",
-
-                result.get(
-                    "severity_level",
-                    "Not calculated"
-                )
-
-            )
-
-
-            affected_area = result.get(
-
-                "affected_area",
-
-                result.get(
-                    "area",
-                    0
-                )
-
-            )
 
 
         elif isinstance(
@@ -585,9 +570,8 @@ def calculate_severity(
 
     except TypeError:
 
-        # ----------------------------------------------------
-        # Compatibility with estimate_severity(filepath, pred)
-        # ----------------------------------------------------
+        # Compatibility with a severity.py
+        # that expects prediction as second argument.
 
         try:
 
@@ -602,6 +586,28 @@ def calculate_severity(
 
             if isinstance(
                 result,
+                dict
+            ):
+
+                severity_level = result.get(
+                    "level",
+                    result.get(
+                        "severity",
+                        "Not calculated"
+                    )
+                )
+
+                affected_area = result.get(
+                    "area",
+                    result.get(
+                        "affected_area",
+                        0
+                    )
+                )
+
+
+            elif isinstance(
+                result,
                 tuple
             ):
 
@@ -610,40 +616,6 @@ def calculate_severity(
                     severity_level = result[0]
 
                     affected_area = result[1]
-
-
-                elif len(result) == 1:
-
-                    severity_level = result[0]
-
-
-            elif isinstance(
-                result,
-                dict
-            ):
-
-                severity_level = result.get(
-
-                    "severity",
-
-                    result.get(
-                        "severity_level",
-                        "Not calculated"
-                    )
-
-                )
-
-
-                affected_area = result.get(
-
-                    "affected_area",
-
-                    result.get(
-                        "area",
-                        0
-                    )
-
-                )
 
 
         except Exception as e:
@@ -664,9 +636,9 @@ def calculate_severity(
         traceback.print_exc()
 
 
-    # --------------------------------------------------------
-    # Normalize affected area
-    # --------------------------------------------------------
+    # ========================================================
+    # CLEAN AREA
+    # ========================================================
 
     try:
 
@@ -676,30 +648,35 @@ def calculate_severity(
 
     except Exception:
 
-        affected_area = 0
+        affected_area = 0.0
 
 
     affected_area = max(
 
-        0,
+        0.0,
 
         min(
-            100,
+            100.0,
             affected_area
         )
 
     )
 
 
-    # --------------------------------------------------------
-    # Normalize severity
-    # --------------------------------------------------------
+    # ========================================================
+    # CLEAN LEVEL
+    # ========================================================
 
     if not severity_level:
 
         severity_level = (
             "Not calculated"
         )
+
+
+    severity_level = str(
+        severity_level
+    )
 
 
     return (
@@ -742,18 +719,17 @@ def generate_ai_explanation(
 
         )
 
-
         if result is None:
 
             return ""
 
-
-        return str(
-            result
-        )
+        return str(result)
 
 
     except TypeError:
+
+        # Compatibility with older
+        # explanation.py
 
         try:
 
@@ -767,15 +743,11 @@ def generate_ai_explanation(
 
             )
 
-
             if result is None:
 
                 return ""
 
-
-            return str(
-                result
-            )
+            return str(result)
 
 
         except Exception as e:
@@ -820,11 +792,9 @@ def generate_severity_advice_safe(
 
         )
 
-
         if result is None:
 
-            return ""
-
+            return {}
 
         return result
 
@@ -837,11 +807,9 @@ def generate_severity_advice_safe(
                 severity
             )
 
-
             if result is None:
 
-                return ""
-
+                return {}
 
             return result
 
@@ -853,7 +821,7 @@ def generate_severity_advice_safe(
                 e
             )
 
-            return ""
+            return {}
 
 
     except Exception as e:
@@ -863,7 +831,7 @@ def generate_severity_advice_safe(
             e
         )
 
-        return ""
+        return {}
 
 
 # ============================================================
@@ -876,32 +844,31 @@ def generate_highlight_safe(
 ):
 
     """
-    Lightweight AI Highlight.
+    Lightweight AI-style disease highlight.
 
     IMPORTANT:
-        This is NOT Grad-CAM.
 
-        It does not load another AI model.
+    This does NOT use Grad-CAM.
 
-        It uses OpenCV only.
+    It does NOT load another AI model.
 
-        Attention Map is completely disabled.
+    It uses OpenCV to detect visually abnormal
+    yellow/brown regions and highlight them.
 
-    The highlight identifies suspicious
-    brown/yellow/non-green regions inside
-    detected green leaf regions.
+    This is intentionally lightweight for Render.
     """
 
     image = None
     hsv = None
-    leaf_mask = None
-    problem_mask = None
     mask = None
-    highlight = None
-    result = None
-
+    overlay = None
 
     try:
+
+        print(
+            "Generating AI Highlight..."
+        )
+
 
         # ====================================================
         # READ IMAGE
@@ -915,7 +882,7 @@ def generate_highlight_safe(
         if image is None:
 
             print(
-                "Highlight: image could not be read."
+                "AI Highlight: image could not be read."
             )
 
             return None
@@ -927,8 +894,7 @@ def generate_highlight_safe(
 
         height, width = image.shape[:2]
 
-
-        max_dimension = 700
+        max_dimension = 900
 
 
         if max(
@@ -953,24 +919,18 @@ def generate_highlight_safe(
 
 
             new_width = max(
-
                 1,
-
                 int(
                     width * scale
                 )
-
             )
 
 
             new_height = max(
-
                 1,
-
                 int(
                     height * scale
                 )
-
             )
 
 
@@ -1002,14 +962,14 @@ def generate_highlight_safe(
 
 
         # ====================================================
-        # GREEN LEAF MASK
+        # DETECT YELLOW / BROWN / DISEASE-LIKE REGIONS
         # ====================================================
 
-        lower_green = np.array(
+        lower_disease = np.array(
 
             [
-                25,
-                30,
+                8,
+                35,
                 30
             ],
 
@@ -1018,10 +978,10 @@ def generate_highlight_safe(
         )
 
 
-        upper_green = np.array(
+        upper_disease = np.array(
 
             [
-                100,
+                45,
                 255,
                 255
             ],
@@ -1031,73 +991,19 @@ def generate_highlight_safe(
         )
 
 
-        leaf_mask = cv2.inRange(
+        mask = cv2.inRange(
 
             hsv,
 
-            lower_green,
+            lower_disease,
 
-            upper_green
-
-        )
-
-
-        # ====================================================
-        # BROWN / YELLOW DISEASE REGION
-        # ====================================================
-
-        lower_problem = np.array(
-
-            [
-                5,
-                30,
-                20
-            ],
-
-            dtype=np.uint8
-
-        )
-
-
-        upper_problem = np.array(
-
-            [
-                40,
-                255,
-                240
-            ],
-
-            dtype=np.uint8
-
-        )
-
-
-        problem_mask = cv2.inRange(
-
-            hsv,
-
-            lower_problem,
-
-            upper_problem
+            upper_disease
 
         )
 
 
         # ====================================================
-        # KEEP PROBLEM REGIONS ASSOCIATED WITH LEAF
-        # ====================================================
-
-        mask = cv2.bitwise_and(
-
-            problem_mask,
-
-            leaf_mask
-
-        )
-
-
-        # ====================================================
-        # MORPHOLOGY
+        # MORPHOLOGICAL CLEANUP
         # ====================================================
 
         kernel = np.ones(
@@ -1135,49 +1041,92 @@ def generate_highlight_safe(
 
 
         # ====================================================
-        # BLUR
+        # REMOVE VERY SMALL REGIONS
         # ====================================================
 
-        mask = cv2.GaussianBlur(
+        contours, _ = cv2.findContours(
 
             mask,
 
-            (
-                11,
-                11
-            ),
+            cv2.RETR_EXTERNAL,
 
-            0
+            cv2.CHAIN_APPROX_SIMPLE
 
         )
 
 
+        clean_mask = np.zeros_like(
+            mask
+        )
+
+
+        minimum_area = max(
+
+            20,
+
+            int(
+                image.shape[0]
+                *
+                image.shape[1]
+                *
+                0.0001
+            )
+
+        )
+
+
+        for contour in contours:
+
+            area = cv2.contourArea(
+                contour
+            )
+
+            if area >= minimum_area:
+
+                cv2.drawContours(
+
+                    clean_mask,
+
+                    [contour],
+
+                    -1,
+
+                    255,
+
+                    -1
+
+                )
+
+
+        mask = clean_mask
+
+
         # ====================================================
-        # HIGHLIGHT
+        # CREATE HIGHLIGHT
         # ====================================================
 
-        highlight = np.zeros_like(
+        overlay = image.copy()
+
+
+        # Highlight detected regions
+        # using red.
+
+        red_layer = np.zeros_like(
             image
         )
 
-
-        # Red channel
-        highlight[:, :, 2] = mask
+        red_layer[:, :, 2] = 255
 
 
-        # ====================================================
-        # OVERLAY
-        # ====================================================
+        highlighted = cv2.addWeighted(
 
-        result = cv2.addWeighted(
+            overlay,
 
-            image,
+            0.65,
 
-            0.70,
+            red_layer,
 
-            highlight,
-
-            0.70,
+            0.35,
 
             0
 
@@ -1185,7 +1134,61 @@ def generate_highlight_safe(
 
 
         # ====================================================
-        # OUTPUT FILE
+        # APPLY ONLY TO MASK
+        # ====================================================
+
+        result = image.copy()
+
+
+        result[mask > 0] = (
+            highlighted[mask > 0]
+        )
+
+
+        # ====================================================
+        # DRAW CONTOURS
+        # ====================================================
+
+        contours, _ = cv2.findContours(
+
+            mask,
+
+            cv2.RETR_EXTERNAL,
+
+            cv2.CHAIN_APPROX_SIMPLE
+
+        )
+
+
+        for contour in contours:
+
+            area = cv2.contourArea(
+                contour
+            )
+
+            if area >= minimum_area:
+
+                cv2.drawContours(
+
+                    result,
+
+                    [contour],
+
+                    -1,
+
+                    (
+                        0,
+                        0,
+                        255
+                    ),
+
+                    2
+
+                )
+
+
+        # ====================================================
+        # OUTPUT NAME
         # ====================================================
 
         base_name = os.path.splitext(
@@ -1222,11 +1225,8 @@ def generate_highlight_safe(
             result,
 
             [
-
                 cv2.IMWRITE_JPEG_QUALITY,
-
                 85
-
             ]
 
         )
@@ -1235,18 +1235,15 @@ def generate_highlight_safe(
         if not success:
 
             print(
-                "Highlight save failed."
+                "AI Highlight save failed."
             )
 
             return None
 
 
         print(
-
             "AI Highlight created:",
-
             highlight_filename
-
         )
 
 
@@ -1268,12 +1265,12 @@ def generate_highlight_safe(
     finally:
 
         image = None
+
         hsv = None
-        leaf_mask = None
-        problem_mask = None
+
         mask = None
-        highlight = None
-        result = None
+
+        overlay = None
 
         gc.collect()
 
@@ -1324,7 +1321,7 @@ def generate_report_safe(
 
 
         # ====================================================
-        # Primary signature
+        # CURRENT REPORT FORMAT
         # ====================================================
 
         try:
@@ -1353,7 +1350,7 @@ def generate_report_safe(
         except TypeError:
 
             # =================================================
-            # Compatibility signature 1
+            # OLD REPORT FORMAT
             # =================================================
 
             try:
@@ -1375,10 +1372,6 @@ def generate_report_safe(
 
             except TypeError:
 
-                # =============================================
-                # Compatibility signature 2
-                # =============================================
-
                 try:
 
                     result = create_report(
@@ -1392,17 +1385,13 @@ def generate_report_safe(
 
                 except TypeError:
 
-                    # =========================================
-                    # Compatibility signature 3
-                    # =========================================
-
                     result = create_report(
                         filename
                     )
 
 
         # ====================================================
-        # Result path
+        # CHECK RETURNED PATH
         # ====================================================
 
         if isinstance(
@@ -1419,10 +1408,6 @@ def generate_report_safe(
                 )
 
 
-        # ====================================================
-        # PathLike
-        # ====================================================
-
         if result is not None:
 
             try:
@@ -1430,7 +1415,6 @@ def generate_report_safe(
                 result_path = os.fspath(
                     result
                 )
-
 
                 if os.path.exists(
                     result_path
@@ -1440,14 +1424,13 @@ def generate_report_safe(
                         result_path
                     )
 
-
             except Exception:
 
                 pass
 
 
         # ====================================================
-        # Expected path
+        # EXPECTED PATH
         # ====================================================
 
         if os.path.exists(
@@ -1458,21 +1441,18 @@ def generate_report_safe(
 
 
         # ====================================================
-        # Search PDF
+        # SEARCH PDF
         # ====================================================
 
         try:
 
-            files = os.listdir(
+            for candidate in os.listdir(
 
                 app.config[
                     "UPLOAD_FOLDER"
                 ]
 
-            )
-
-
-            for candidate in files:
+            ):
 
                 if (
 
@@ -1490,7 +1470,6 @@ def generate_report_safe(
 
                     return candidate
 
-
         except Exception:
 
             pass
@@ -1499,7 +1478,6 @@ def generate_report_safe(
         print(
             "PDF report was not created."
         )
-
 
         return None
 
@@ -1558,7 +1536,6 @@ def save_history_safe(
             "History saved."
         )
 
-
         return True
 
 
@@ -1569,43 +1546,7 @@ def save_history_safe(
             e
         )
 
-        traceback.print_exc()
-
         return False
-
-
-# ============================================================
-# PROCESS DISEASE INFO
-# ============================================================
-
-def get_disease_info(
-    prediction
-):
-
-    try:
-
-        info = get_disease(
-            prediction
-        )
-
-    except Exception as e:
-
-        print(
-            "Disease lookup error:",
-            e
-        )
-
-        info = None
-
-
-    if info is None:
-
-        info = fallback_disease_info(
-            prediction
-        )
-
-
-    return info
 
 
 # ============================================================
@@ -1666,23 +1607,7 @@ def upload():
 
 
     # ========================================================
-    # CHECK MODEL
-    # ========================================================
-
-    if MODEL is None:
-
-        return (
-
-            "AI model is not available. "
-            "Please check the Render logs.",
-
-            500
-
-        )
-
-
-    # ========================================================
-    # FILE
+    # UNIQUE FILE
     # ========================================================
 
     filename = create_unique_filename(
@@ -1702,7 +1627,7 @@ def upload():
 
 
     # ========================================================
-    # SAVE
+    # SAVE IMAGE
     # ========================================================
 
     try:
@@ -1710,7 +1635,6 @@ def upload():
         file.save(
             filepath
         )
-
 
         print(
             "Image saved:",
@@ -1724,9 +1648,6 @@ def upload():
             "File save error:",
             e
         )
-
-        traceback.print_exc()
-
 
         return (
             "Could not save image.",
@@ -1765,16 +1686,8 @@ def upload():
             prediction
         )
 
-
         print(
-            f"Confidence: "
-            f"{confidence:.2f}%"
-        )
-
-
-        print(
-            "Confidence status:",
-            confidence_status
+            f"Confidence: {confidence:.2f}%"
         )
 
 
@@ -1787,15 +1700,12 @@ def upload():
 
         traceback.print_exc()
 
-
         safe_cleanup()
 
 
         return (
 
-            "Prediction failed: "
-
-            + str(e),
+            f"Prediction failed: {str(e)}",
 
             500
 
@@ -1811,9 +1721,65 @@ def upload():
     # DISEASE INFORMATION
     # ========================================================
 
-    info = get_disease_info(
+    try:
+
+        info = get_disease(
+            prediction
+        )
+
+    except Exception as e:
+
+        print(
+            "Disease lookup error:",
+            e
+        )
+
+        info = None
+
+
+    # ========================================================
+    # FALLBACK
+    # ========================================================
+
+    if info is None:
+
+        print(
+            "Disease information not found."
+        )
+
+        info = fallback_disease_info(
+            prediction
+        )
+
+
+    # ========================================================
+    # RECOVER PLANT NAME
+    # ========================================================
+
+    if (
+
+        info.get(
+            "plant",
+            "Unknown"
+        ) == "Unknown"
+
+        and
+
         prediction
-    )
+
+        and
+
+        " - " in prediction
+
+    ):
+
+        info["plant"] = prediction.split(
+
+            " - ",
+
+            1
+
+        )[0].strip()
 
 
     # ========================================================
@@ -1821,11 +1787,6 @@ def upload():
     # ========================================================
 
     if confidence < 40:
-
-        print(
-            "Low confidence prediction."
-        )
-
 
         return render_template(
 
@@ -1851,11 +1812,6 @@ def upload():
     # SEVERITY
     # ========================================================
 
-    print(
-        "Calculating severity..."
-    )
-
-
     (
 
         severity_level,
@@ -1876,22 +1832,15 @@ def upload():
         severity_level
     )
 
-
     print(
         "Affected area:",
-        affected_area,
-        "%"
+        affected_area
     )
 
 
     # ========================================================
     # AI EXPLANATION
     # ========================================================
-
-    print(
-        "Generating explanation..."
-    )
-
 
     explanation = generate_ai_explanation(
 
@@ -1911,11 +1860,6 @@ def upload():
     # ========================================================
     # SEVERITY ADVICE
     # ========================================================
-
-    print(
-        "Generating severity advice..."
-    )
-
 
     severity_advice = (
 
@@ -1937,7 +1881,7 @@ def upload():
     # ========================================================
 
     print(
-        "Generating AI Highlight..."
+        "AI Highlight: ENABLED"
     )
 
 
@@ -1955,22 +1899,15 @@ def upload():
 
 
     # ========================================================
-    # ATTENTION MAP
+    # AI ATTENTION MAP
     # ========================================================
 
-    # INTENTIONALLY DISABLED
+    # Completely disabled.
 
     attention_name = None
 
-
     print(
         "AI Attention Map: DISABLED"
-    )
-
-
-    print(
-        "AI Highlight:",
-        highlight_name
     )
 
 
@@ -2032,7 +1969,7 @@ def upload():
 
 
     # ========================================================
-    # LOG
+    # LOG RESULT
     # ========================================================
 
     print()
@@ -2040,66 +1977,71 @@ def upload():
         "Rendering result page..."
     )
 
-
     print(
         "Original:",
         filename
     )
 
-
     print(
-        "Highlight:",
+        "AI Highlight:",
         highlight_name
     )
 
-
     print(
-        "Attention:",
+        "AI Attention:",
         attention_name
     )
-
 
     print(
         "Severity:",
         severity_level
     )
 
-
     print(
-        "Affected area:",
+        "Affected Area:",
         affected_area
     )
-
 
     print(
         "PDF:",
         report_name
     )
 
-
     print("=" * 60)
 
 
     # ========================================================
-    # RESULT
+    # RESULT PAGE
     # ========================================================
 
     return render_template(
 
         "result.html",
 
-        # Original
+        # Original image
         image=filename,
 
-        # AI Highlight ENABLED
+        # AI Highlight
         highlight=highlight_name,
 
-        # Attention Map DISABLED
+        # Attention disabled
         gradcam=None,
 
         attention=None,
 
         # Prediction
+        prediction=prediction,
+
+        disease=info.get(
+            "disease",
+            prediction
+        ),
+
+        plant=info.get(
+            "plant",
+            "Unknown"
+        ),
+
         confidence=round(
             confidence,
             2
@@ -2154,15 +2096,14 @@ def api_predict():
 
 
     # ========================================================
-    # FILE
+    # FILE CHECK
     # ========================================================
 
     if "image" not in request.files:
 
         return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "No image uploaded"
@@ -2177,8 +2118,7 @@ def api_predict():
 
         return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "No file selected"
@@ -2196,30 +2136,12 @@ def api_predict():
 
         return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "Invalid image format"
 
         }), 400
-
-
-    # ========================================================
-    # MODEL
-    # ========================================================
-
-    if MODEL is None:
-
-        return jsonify({
-
-            "success":
-                False,
-
-            "error":
-                "AI model is not available"
-
-        }), 500
 
 
     # ========================================================
@@ -2248,13 +2170,11 @@ def api_predict():
             filepath
         )
 
-
     except Exception as e:
 
         return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "Could not save image",
@@ -2295,14 +2215,12 @@ def api_predict():
 
         traceback.print_exc()
 
-
         safe_cleanup()
 
 
         return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "AI prediction failed",
@@ -2322,9 +2240,57 @@ def api_predict():
     # DISEASE INFO
     # ========================================================
 
-    info = get_disease_info(
+    try:
+
+        info = get_disease(
+            prediction
+        )
+
+    except Exception as e:
+
+        print(
+            "Disease lookup error:",
+            e
+        )
+
+        info = None
+
+
+    if info is None:
+
+        info = fallback_disease_info(
+            prediction
+        )
+
+
+    # ========================================================
+    # PLANT FALLBACK
+    # ========================================================
+
+    if (
+
+        info.get(
+            "plant",
+            "Unknown"
+        ) == "Unknown"
+
+        and
+
         prediction
-    )
+
+        and
+
+        " - " in prediction
+
+    ):
+
+        info["plant"] = prediction.split(
+
+            " - ",
+
+            1
+
+        )[0].strip()
 
 
     # ========================================================
@@ -2413,7 +2379,7 @@ def api_predict():
 
 
     # ========================================================
-    # ADVICE
+    # SEVERITY ADVICE
     # ========================================================
 
     severity_advice = (
@@ -2467,6 +2433,13 @@ def api_predict():
         )
 
     )
+
+
+    # ========================================================
+    # ATTENTION DISABLED
+    # ========================================================
+
+    attention_name = None
 
 
     # ========================================================
@@ -2553,11 +2526,11 @@ def api_predict():
         "top_predictions":
             top_predictions,
 
-        # AI Highlight enabled
+        # Highlight ENABLED
         "highlight":
             highlight_name,
 
-        # Attention Map disabled
+        # Attention DISABLED
         "attention":
             None
 
@@ -2573,7 +2546,7 @@ def api_predict():
 
 
 # ============================================================
-# HISTORY
+# HISTORY PAGE
 # ============================================================
 
 @app.route("/history")
@@ -2591,16 +2564,12 @@ def history():
             search
         )
 
-
     except Exception as e:
 
         print(
             "History error:",
             e
         )
-
-        traceback.print_exc()
-
 
         rows = []
 
@@ -2617,7 +2586,7 @@ def history():
 
 
 # ============================================================
-# UPLOADED FILES
+# SERVE UPLOADED FILES
 # ============================================================
 
 @app.route(
@@ -2639,7 +2608,7 @@ def uploaded_file(
 
 
 # ============================================================
-# 413
+# 413 ERROR
 # ============================================================
 
 @app.errorhandler(413)
@@ -2656,7 +2625,7 @@ def file_too_large(error):
 
 
 # ============================================================
-# 500
+# 500 ERROR
 # ============================================================
 
 @app.errorhandler(500)
@@ -2668,7 +2637,6 @@ def internal_error(error):
     )
 
     traceback.print_exc()
-
 
     safe_cleanup()
 
@@ -2684,7 +2652,7 @@ def internal_error(error):
 
 
 # ============================================================
-# LOCAL / RENDER
+# LOCAL DEVELOPMENT
 # ============================================================
 
 if __name__ == "__main__":
@@ -2697,6 +2665,26 @@ if __name__ == "__main__":
         )
 
     )
+
+
+    print()
+    print("=" * 60)
+    print("PLANTAI SERVER")
+    print("=" * 60)
+    print(
+        "Port:",
+        port
+    )
+    print(
+        "AI Highlight: ENABLED"
+    )
+    print(
+        "AI Attention Map: DISABLED"
+    )
+    print(
+        "Severity: ENABLED"
+    )
+    print("=" * 60)
 
 
     app.run(

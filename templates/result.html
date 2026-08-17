@@ -8,8 +8,7 @@
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
 
-    <title>PlantAI Report</title>
-
+    <title>PlantAI Disease Diagnosis</title>
 
     <style>
 
@@ -17,16 +16,23 @@
             box-sizing: border-box;
         }
 
-
         body {
-
-            font-family: Arial, sans-serif;
-
-            background: #f1f8e9;
 
             margin: 0;
 
             padding: 20px;
+
+            font-family:
+                Arial,
+                Helvetica,
+                sans-serif;
+
+            background:
+                linear-gradient(
+                    135deg,
+                    #e8f5e9,
+                    #f1f8e9
+                );
 
             color: #263238;
 
@@ -46,11 +52,15 @@
             border-radius: 18px;
 
             box-shadow:
-                0 5px 20px
-                rgba(0,0,0,0.08);
+                0 8px 30px
+                rgba(0,0,0,0.10);
 
         }
 
+
+        /* ==================================================
+           HEADER
+        ================================================== */
 
         h1 {
 
@@ -58,25 +68,11 @@
 
             color: #2e7d32;
 
-            margin-bottom: 30px;
-
-        }
-
-
-        h2 {
-
-            color: #2e7d32;
-
             margin-top: 0;
 
-        }
+            margin-bottom: 30px;
 
-
-        h3 {
-
-            color: #388e3c;
-
-            text-align: center;
+            font-size: 32px;
 
         }
 
@@ -89,45 +85,65 @@
 
             display: flex;
 
-            gap: 25px;
-
             justify-content: center;
+
+            align-items: flex-start;
+
+            gap: 30px;
 
             flex-wrap: wrap;
 
-            margin-bottom: 25px;
+            margin-bottom: 30px;
 
         }
 
 
-        .image-box {
+        .image-card {
 
-            flex: 1;
+            width: 430px;
 
-            min-width: 300px;
-
-            max-width: 470px;
+            max-width: 100%;
 
             text-align: center;
 
         }
 
 
-        .image-box img {
+        .image-card h3 {
+
+            color: #2e7d32;
+
+            margin-bottom: 12px;
+
+        }
+
+
+        .image-card img {
 
             width: 100%;
 
-            max-width: 450px;
-
-            height: 350px;
+            max-height: 420px;
 
             object-fit: contain;
 
             border-radius: 12px;
 
-            border: 2px solid #4caf50;
+            border: 2px solid #81c784;
 
             background: #eeeeee;
+
+            padding: 5px;
+
+        }
+
+
+        .image-description {
+
+            margin-top: 8px;
+
+            color: #607d8b;
+
+            font-size: 14px;
 
         }
 
@@ -142,7 +158,7 @@
 
             padding: 22px;
 
-            margin-top: 20px;
+            margin-top: 22px;
 
             border-radius: 12px;
 
@@ -151,11 +167,18 @@
         }
 
 
-        .diagnosis-card {
+        .card h2 {
 
-            background: #e8f5e9;
+            margin-top: 0;
 
-            border-left: 6px solid #2e7d32;
+            color: #2e7d32;
+
+        }
+
+
+        .card p {
+
+            line-height: 1.6;
 
         }
 
@@ -164,42 +187,90 @@
            DIAGNOSIS
         ================================================== */
 
-        .diagnosis-row {
+        .diagnosis-grid {
 
-            display: flex;
+            display: grid;
 
-            justify-content: space-between;
+            grid-template-columns:
+                repeat(
+                    auto-fit,
+                    minmax(220px, 1fr)
+                );
 
-            gap: 20px;
+            gap: 15px;
 
-            padding: 12px 0;
-
-            border-bottom: 1px solid #dcedc8;
-
-        }
-
-
-        .diagnosis-row:last-child {
-
-            border-bottom: none;
+            margin-top: 15px;
 
         }
 
 
-        .label {
+        .diagnosis-item {
+
+            background: white;
+
+            padding: 18px;
+
+            border-radius: 10px;
+
+            border: 1px solid #dcedc8;
+
+        }
+
+
+        .diagnosis-label {
+
+            display: block;
+
+            color: #607d8b;
+
+            font-size: 14px;
+
+            margin-bottom: 7px;
+
+        }
+
+
+        .diagnosis-value {
+
+            font-size: 19px;
 
             font-weight: bold;
 
-            color: #455a64;
+            color: #263238;
 
         }
 
 
-        .value {
+        /* ==================================================
+           CONFIDENCE
+        ================================================== */
 
-            font-weight: bold;
+        .confidence-bar {
 
-            text-align: right;
+            width: 100%;
+
+            height: 18px;
+
+            background: #e0e0e0;
+
+            border-radius: 20px;
+
+            overflow: hidden;
+
+            margin-top: 10px;
+
+        }
+
+
+        .confidence-fill {
+
+            height: 100%;
+
+            background: #43a047;
+
+            width: {{ confidence }}%;
+
+            border-radius: 20px;
 
         }
 
@@ -208,29 +279,32 @@
            SEVERITY
         ================================================== */
 
+        .severity {
+
+            font-weight: bold;
+
+            font-size: 20px;
+
+        }
+
+
         .critical {
 
             color: #d32f2f;
-
-            font-weight: bold;
 
         }
 
 
         .moderate {
 
-            color: #ef6c00;
-
-            font-weight: bold;
+            color: #f57c00;
 
         }
 
 
         .mild {
 
-            color: #2e7d32;
-
-            font-weight: bold;
+            color: #388e3c;
 
         }
 
@@ -238,8 +312,6 @@
         .unknown {
 
             color: #757575;
-
-            font-weight: bold;
 
         }
 
@@ -257,103 +329,99 @@
 
         li {
 
-            margin: 9px 0;
+            margin-bottom: 9px;
 
             line-height: 1.5;
 
         }
 
 
-        p {
+        /* ==================================================
+           EXPLANATION
+        ================================================== */
 
-            line-height: 1.6;
+        .explanation {
+
+            white-space: pre-line;
+
+            line-height: 1.7;
 
         }
 
 
         /* ==================================================
-           CONFIDENCE
+           SEVERITY ADVICE
         ================================================== */
 
-        .confidence-box {
+        .advice {
 
-            margin-top: 15px;
+            background: #fff8e1;
 
-            background: white;
-
-            padding: 15px;
-
-            border-radius: 10px;
+            border-left: 5px solid #ffb300;
 
         }
 
 
-        .confidence-bar {
+        .advice-message {
 
-            width: 100%;
+            font-size: 17px;
 
-            height: 18px;
+            font-weight: bold;
 
-            background: #ddd;
-
-            border-radius: 10px;
-
-            overflow: hidden;
-
-            margin-top: 8px;
-
-        }
-
-
-        .confidence-fill {
-
-            height: 100%;
-
-            background: #43a047;
-
-            width: {{confidence}}%;
+            margin-bottom: 15px;
 
         }
 
 
         /* ==================================================
-           TOP PREDICTIONS
+           TOP PREDICTIONS TABLE
         ================================================== */
 
-        .prediction-table {
+        .table-container {
+
+            overflow-x: auto;
+
+        }
+
+
+        table {
 
             width: 100%;
 
             border-collapse: collapse;
 
-            margin-top: 15px;
-
             background: white;
 
-            border-radius: 8px;
-
-            overflow: hidden;
+            margin-top: 15px;
 
         }
 
 
-        .prediction-table th,
-        .prediction-table td {
+        th {
+
+            background: #388e3c;
+
+            color: white;
 
             padding: 12px;
-
-            border-bottom: 1px solid #ddd;
 
             text-align: left;
 
         }
 
 
-        .prediction-table th {
+        td {
 
-            background: #e8f5e9;
+            padding: 12px;
 
-            color: #2e7d32;
+            border-bottom: 1px solid #ddd;
+
+        }
+
+
+        tr:nth-child(even) {
+
+            background: #f5f5f5;
 
         }
 
@@ -366,63 +434,31 @@
 
 
         /* ==================================================
-           AFFECTED AREA
-        ================================================== */
-
-        .area-box {
-
-            margin-top: 15px;
-
-            background: white;
-
-            padding: 15px;
-
-            border-radius: 10px;
-
-        }
-
-
-        .area-bar {
-
-            width: 100%;
-
-            height: 18px;
-
-            background: #ddd;
-
-            border-radius: 10px;
-
-            overflow: hidden;
-
-            margin-top: 8px;
-
-        }
-
-
-        .area-fill {
-
-            height: 100%;
-
-            background: #ef6c00;
-
-            width: {{affected_area}}%;
-
-        }
-
-
-        /* ==================================================
            BUTTONS
         ================================================== */
 
+        .buttons {
+
+            display: flex;
+
+            justify-content: center;
+
+            gap: 15px;
+
+            flex-wrap: wrap;
+
+            margin-top: 30px;
+
+        }
+
+
         .button {
 
-            display: block;
+            display: inline-block;
 
-            width: 260px;
+            min-width: 220px;
 
-            margin: 25px auto;
-
-            padding: 13px 18px;
+            padding: 14px 20px;
 
             background: #388e3c;
 
@@ -432,7 +468,7 @@
 
             text-decoration: none;
 
-            border-radius: 9px;
+            border-radius: 8px;
 
             font-weight: bold;
 
@@ -443,21 +479,23 @@
 
         .button:hover {
 
-            background: #1b5e20;
+            background: #2e7d32;
+
+            transform: translateY(-1px);
 
         }
 
 
-        .button.secondary {
+        .button.pdf {
 
-            background: #546e7a;
+            background: #1565c0;
 
         }
 
 
-        .button.secondary:hover {
+        .button.pdf:hover {
 
-            background: #37474f;
+            background: #0d47a1;
 
         }
 
@@ -466,7 +504,7 @@
            MOBILE
         ================================================== */
 
-        @media (max-width: 700px) {
+        @media (max-width: 600px) {
 
             body {
 
@@ -482,32 +520,30 @@
             }
 
 
-            .image-box {
+            h1 {
 
-                min-width: 100%;
-
-            }
-
-
-            .image-box img {
-
-                height: 280px;
+                font-size: 25px;
 
             }
 
 
-            .diagnosis-row {
+            .image-card {
 
-                flex-direction: column;
-
-                gap: 5px;
+                width: 100%;
 
             }
 
 
-            .value {
+            .image-card img {
 
-                text-align: left;
+                max-height: 350px;
+
+            }
+
+
+            .card {
+
+                padding: 17px;
 
             }
 
@@ -532,7 +568,7 @@
 
 
     <!-- ==================================================
-         TITLE
+         HEADER
     ================================================== -->
 
     <h1>
@@ -549,7 +585,7 @@
 
         <!-- ORIGINAL -->
 
-        <div class="image-box">
+        <div class="image-card">
 
             <h3>
                 🖼 Original Image
@@ -560,6 +596,12 @@
                 alt="Original Plant Image"
             >
 
+            <div class="image-description">
+
+                Original Plant Image
+
+            </div>
+
         </div>
 
 
@@ -567,7 +609,7 @@
 
         {% if highlight %}
 
-        <div class="image-box">
+        <div class="image-card">
 
             <h3>
                 🔴 AI Highlight
@@ -578,11 +620,12 @@
                 alt="AI Highlight"
             >
 
-            <p>
+            <div class="image-description">
+
                 Highlighted regions indicate
-                areas detected by the lightweight
-                image-analysis system.
-            </p>
+                areas detected by the AI image-analysis system.
+
+            </div>
 
         </div>
 
@@ -596,161 +639,142 @@
          DIAGNOSIS
     ================================================== -->
 
-    <div class="card diagnosis-card">
+    <div class="card">
 
         <h2>
             📋 Diagnosis
         </h2>
 
 
-        <div class="diagnosis-row">
-
-            <span class="label">
-                🌿 Plant
-            </span>
-
-            <span class="value">
-                {{ info.plant }}
-            </span>
-
-        </div>
+        <div class="diagnosis-grid">
 
 
-        <div class="diagnosis-row">
+            <div class="diagnosis-item">
 
-            <span class="label">
-                🦠 Disease
-            </span>
+                <span class="diagnosis-label">
+                    🌿 Plant
+                </span>
 
-            <span class="value">
-                {{ info.disease }}
-            </span>
+                <span class="diagnosis-value">
 
-        </div>
+                    {{ info.plant
+                       if info and info.plant
+                       else "Unknown" }}
 
+                </span>
 
-        <div class="diagnosis-row">
-
-            <span class="label">
-                🎯 Confidence
-            </span>
-
-            <span class="value">
-                {{ confidence }}%
-            </span>
-
-        </div>
+            </div>
 
 
-        {% if confidence_status %}
+            <div class="diagnosis-item">
 
-        <div class="diagnosis-row">
+                <span class="diagnosis-label">
+                    🦠 Disease
+                </span>
 
-            <span class="label">
-                📊 Confidence Status
-            </span>
+                <span class="diagnosis-value">
 
-            <span class="value">
-                {{ confidence_status }}
-            </span>
+                    {{ info.disease
+                       if info and info.disease
+                       else prediction }}
 
-        </div>
+                </span>
 
-        {% endif %}
-
-
-        <div class="diagnosis-row">
-
-            <span class="label">
-                📈 Severity
-            </span>
+            </div>
 
 
-            <span class="value">
+            <div class="diagnosis-item">
+
+                <span class="diagnosis-label">
+                    🎯 Confidence
+                </span>
+
+                <span class="diagnosis-value">
+
+                    {{ confidence }}%
+
+                </span>
+
+
+                <div class="confidence-bar">
+
+                    <div
+                        class="confidence-fill"
+                        style="width: {{ confidence }}%;">
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="diagnosis-item">
+
+                <span class="diagnosis-label">
+                    📊 Confidence Status
+                </span>
+
+                <span class="diagnosis-value">
+
+                    {{ confidence_status }}
+
+                </span>
+
+            </div>
+
+
+            <div class="diagnosis-item">
+
+                <span class="diagnosis-label">
+                    📈 Severity
+                </span>
+
 
                 {% if severity == "Critical" %}
 
-                    <span class="critical">
-                        🚨 {{ severity }}
+                    <span class="diagnosis-value critical">
+                        ⚠️ {{ severity }}
                     </span>
 
                 {% elif severity == "Moderate" %}
 
-                    <span class="moderate">
+                    <span class="diagnosis-value moderate">
                         ⚠️ {{ severity }}
                     </span>
 
                 {% elif severity == "Mild" %}
 
-                    <span class="mild">
+                    <span class="diagnosis-value mild">
                         ✅ {{ severity }}
                     </span>
 
                 {% else %}
 
-                    <span class="unknown">
+                    <span class="diagnosis-value unknown">
                         {{ severity }}
                     </span>
 
                 {% endif %}
 
-            </span>
-
-        </div>
+            </div>
 
 
-        <div class="diagnosis-row">
+            <div class="diagnosis-item">
 
-            <span class="label">
-                🍂 Leaf Area Affected
-            </span>
+                <span class="diagnosis-label">
+                    🍂 Leaf Area Affected
+                </span>
 
-            <span class="value">
-                {{ affected_area }}%
-            </span>
+                <span class="diagnosis-value">
 
-        </div>
+                    {{ affected_area }}%
 
-
-        <!-- CONFIDENCE BAR -->
-
-        <div class="confidence-box">
-
-            <strong>
-                Confidence
-            </strong>
-
-            <div class="confidence-bar">
-
-                <div
-                    class="confidence-fill"
-                    style="width: {{ confidence }}%;"
-                ></div>
+                </span>
 
             </div>
 
-        </div>
-
-
-        <!-- AREA BAR -->
-
-        <div class="area-box">
-
-            <strong>
-                Affected Leaf Area
-            </strong>
-
-            <div class="area-bar">
-
-                <div
-                    class="area-fill"
-                    style="width: {{ affected_area }}%;"
-                ></div>
-
-            </div>
 
         </div>
-
 
     </div>
 
@@ -765,19 +789,19 @@
             🦠 Cause
         </h2>
 
-        {% if info.cause %}
+        <p>
 
-            <p>
+            {% if info and info.cause %}
+
                 {{ info.cause }}
-            </p>
 
-        {% else %}
+            {% else %}
 
-            <p>
-                Cause information is not available.
-            </p>
+                Information not available
 
-        {% endif %}
+            {% endif %}
+
+        </p>
 
     </div>
 
@@ -793,15 +817,15 @@
         </h2>
 
 
-        {% if info.symptoms %}
+        {% if info and info.symptoms %}
 
         <ul>
 
-            {% for x in info.symptoms %}
+            {% for symptom in info.symptoms %}
 
-                <li>
-                    {{ x }}
-                </li>
+            <li>
+                {{ symptom }}
+            </li>
 
             {% endfor %}
 
@@ -829,15 +853,15 @@
         </h2>
 
 
-        {% if info.treatment %}
+        {% if info and info.treatment %}
 
         <ul>
 
-            {% for x in info.treatment %}
+            {% for treatment in info.treatment %}
 
-                <li>
-                    {{ x }}
-                </li>
+            <li>
+                {{ treatment }}
+            </li>
 
             {% endfor %}
 
@@ -855,6 +879,29 @@
 
 
     <!-- ==================================================
+         AI EXPLANATION
+    ================================================== -->
+
+    {% if explanation %}
+
+    <div class="card">
+
+        <h2>
+            🤖 AI Explanation
+        </h2>
+
+        <p class="explanation">
+
+            {{ explanation }}
+
+        </p>
+
+    </div>
+
+    {% endif %}
+
+
+    <!-- ==================================================
          ORGANIC TREATMENT
     ================================================== -->
 
@@ -865,15 +912,15 @@
         </h2>
 
 
-        {% if info.organic_treatment %}
+        {% if info and info.organic_treatment %}
 
         <ul>
 
-            {% for x in info.organic_treatment %}
+            {% for treatment in info.organic_treatment %}
 
-                <li>
-                    {{ x }}
-                </li>
+            <li>
+                {{ treatment }}
+            </li>
 
             {% endfor %}
 
@@ -901,15 +948,15 @@
         </h2>
 
 
-        {% if info.prevention %}
+        {% if info and info.prevention %}
 
         <ul>
 
-            {% for x in info.prevention %}
+            {% for prevention in info.prevention %}
 
-                <li>
-                    {{ x }}
-                </li>
+            <li>
+                {{ prevention }}
+            </li>
 
             {% endfor %}
 
@@ -927,33 +974,12 @@
 
 
     <!-- ==================================================
-         AI EXPLANATION
-    ================================================== -->
-
-    {% if explanation %}
-
-    <div class="card">
-
-        <h2>
-            🤖 AI Explanation
-        </h2>
-
-        <p style="white-space: pre-line;">
-            {{ explanation }}
-        </p>
-
-    </div>
-
-    {% endif %}
-
-
-    <!-- ==================================================
          SEVERITY ADVICE
     ================================================== -->
 
     {% if severity_advice %}
 
-    <div class="card">
+    <div class="card advice">
 
         <h2>
             🚨 Severity Advice
@@ -962,10 +988,10 @@
 
         {% if severity_advice.message %}
 
-        <p>
-            <strong>
-                {{ severity_advice.message }}
-            </strong>
+        <p class="advice-message">
+
+            {{ severity_advice.message }}
+
         </p>
 
         {% endif %}
@@ -975,24 +1001,15 @@
 
         <ul>
 
-            {% for x in severity_advice.actions %}
+            {% for action in severity_advice.actions %}
 
-                <li>
-                    {{ x }}
-                </li>
+            <li>
+                {{ action }}
+            </li>
 
             {% endfor %}
 
         </ul>
-
-        {% endif %}
-
-
-        {% if not severity_advice.message and not severity_advice.actions %}
-
-        <p style="white-space: pre-line;">
-            {{ severity_advice }}
-        </p>
 
         {% endif %}
 
@@ -1014,54 +1031,64 @@
         </h2>
 
 
-        <table class="prediction-table">
+        <div class="table-container">
 
-            <thead>
+            <table>
 
-                <tr>
+                <thead>
 
-                    <th>
-                        #
-                    </th>
+                    <tr>
 
-                    <th>
-                        Disease
-                    </th>
+                        <th>
+                            #
+                        </th>
 
-                    <th>
-                        Confidence
-                    </th>
+                        <th>
+                            Disease
+                        </th>
 
-                </tr>
+                        <th>
+                            Confidence
+                        </th>
 
-            </thead>
+                    </tr>
+
+                </thead>
 
 
-            <tbody>
+                <tbody>
 
-                {% for item in top_predictions %}
+                    {% for item in top_predictions %}
 
-                <tr>
+                    <tr>
 
-                    <td>
-                        {{ loop.index }}
-                    </td>
+                        <td>
+                            {{ loop.index }}
+                        </td>
 
-                    <td>
-                        {{ item.class }}
-                    </td>
+                        <td>
 
-                    <td class="prediction-confidence">
-                        {{ item.confidence }}%
-                    </td>
+                            {{ item.class
+                               if item.class
+                               else item.raw_class }}
 
-                </tr>
+                        </td>
 
-                {% endfor %}
+                        <td class="prediction-confidence">
 
-            </tbody>
+                            {{ item.confidence }}%
 
-        </table>
+                        </td>
+
+                    </tr>
+
+                    {% endfor %}
+
+                </tbody>
+
+            </table>
+
+        </div>
 
     </div>
 
@@ -1069,36 +1096,38 @@
 
 
     <!-- ==================================================
-         PDF
+         BUTTONS
     ================================================== -->
 
-    {% if report %}
-
-    <a
-        class="button"
-        href="{{ url_for('uploaded_file', filename=report) }}"
-        download
-    >
-
-        📄 Download PDF Report
-
-    </a>
-
-    {% endif %}
+    <div class="buttons">
 
 
-    <!-- ==================================================
-         NEW ANALYSIS
-    ================================================== -->
+        {% if report %}
 
-    <a
-        class="button secondary"
-        href="/"
-    >
+        <a
+            class="button pdf"
+            href="{{ url_for('uploaded_file', filename=report) }}"
+            download
+        >
 
-        ⬅ Analyze Another Leaf
+            📄 Download PDF Report
 
-    </a>
+        </a>
+
+        {% endif %}
+
+
+        <a
+            class="button"
+            href="/"
+        >
+
+            ⬅ Analyze Another Leaf
+
+        </a>
+
+
+    </div>
 
 
 </div>
