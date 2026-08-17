@@ -5,28 +5,29 @@
 PlantAI Flask Application
 ============================================================
 
-Render optimized version.
+Render 512 MB memory optimized version.
 
 Features:
     - Plant disease prediction
     - Disease information
     - Severity estimation
     - AI explanation
-    - AI highlight
-    - AI attention map / Grad-CAM
+    - AI Highlight DISABLED
+    - Lightweight AI Attention Map
     - PDF report
     - Prediction history
     - Dashboard
     - Chatbot
     - Mobile API
 
-Important for Render:
-    - Gunicorn workers should remain 1
-    - Prediction model is loaded once by predict.py
-    - cleanup() is called after predictions
-    - Expensive optional features are isolated
-    - Failure of highlight / explanation / PDF does not
-      destroy the main diagnosis
+IMPORTANT:
+    - predict.py contains the main EfficientNet model
+    - Only ONE prediction model is loaded
+    - No pytorch-grad-cam
+    - No second AI model
+    - AI Highlight is disabled
+    - Attention map uses lightweight OpenCV processing
+    - Aggressive cleanup is used
 ============================================================
 """
 
@@ -34,6 +35,9 @@ import os
 import gc
 import uuid
 import traceback
+
+import cv2
+import numpy as np
 
 from flask import (
     Flask,
@@ -47,7 +51,7 @@ from werkzeug.utils import secure_filename
 
 
 # ============================================================
-# AI / PROJECT IMPORTS
+# PROJECT IMPORTS
 # ============================================================
 
 from predict import (
@@ -76,10 +80,6 @@ from severity_advice import (
     get_severity_advice
 )
 
-from highlight import (
-    create_highlight
-)
-
 from report_generator import (
     create_report
 )
@@ -105,26 +105,26 @@ app = Flask(__name__)
 
 
 # ============================================================
-# BASIC CONFIGURATION
+# BASE PATHS
 # ============================================================
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
 
+
 UPLOAD_FOLDER = os.path.join(
     BASE_DIR,
     "uploads"
 )
 
-REPORT_FOLDER = UPLOAD_FOLDER
 
-HIGHLIGHT_FOLDER = UPLOAD_FOLDER
+app.config["UPLOAD_FOLDER"] = (
+    UPLOAD_FOLDER
+)
 
-ATTENTION_FOLDER = UPLOAD_FOLDER
 
-
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Maximum upload size = 10 MB
 
 app.config["MAX_CONTENT_LENGTH"] = (
     10 * 1024 * 1024
@@ -132,7 +132,7 @@ app.config["MAX_CONTENT_LENGTH"] = (
 
 
 # ============================================================
-# CREATE DIRECTORIES
+# CREATE UPLOAD DIRECTORY
 # ============================================================
 
 os.makedirs(
@@ -140,24 +140,9 @@ os.makedirs(
     exist_ok=True
 )
 
-os.makedirs(
-    REPORT_FOLDER,
-    exist_ok=True
-)
-
-os.makedirs(
-    HIGHLIGHT_FOLDER,
-    exist_ok=True
-)
-
-os.makedirs(
-    ATTENTION_FOLDER,
-    exist_ok=True
-)
-
 
 # ============================================================
-# ALLOWED IMAGE EXTENSIONS
+# ALLOWED FILES
 # ============================================================
 
 ALLOWED_EXTENSIONS = {
@@ -169,7 +154,7 @@ ALLOWED_EXTENSIONS = {
 
 
 # ============================================================
-# DATABASE INITIALIZATION
+# DATABASE
 # ============================================================
 
 try:
@@ -215,15 +200,17 @@ except Exception as e:
 
 
 # ============================================================
-# UTILITY FUNCTIONS
+# UTILITY
 # ============================================================
 
 def allowed_file(filename):
 
     if not filename:
+
         return False
 
     if "." not in filename:
+
         return False
 
     extension = (
@@ -236,7 +223,7 @@ def allowed_file(filename):
 
 
 # ============================================================
-# SAFE CLEANUP
+# CLEANUP
 # ============================================================
 
 def safe_cleanup():
@@ -248,7 +235,7 @@ def safe_cleanup():
     except Exception as e:
 
         print(
-            "Prediction cleanup warning:",
+            "Cleanup warning:",
             e
         )
 
@@ -262,7 +249,7 @@ def safe_cleanup():
 
 
 # ============================================================
-# SAFE FILE NAME
+# UNIQUE FILE NAME
 # ============================================================
 
 def create_unique_filename(
@@ -276,7 +263,6 @@ def create_unique_filename(
     if not safe_name:
 
         safe_name = "image.jpg"
-
 
     unique_id = uuid.uuid4().hex[:12]
 
@@ -338,16 +324,22 @@ def home():
 @app.route("/health")
 def health():
 
-    return {
+    return jsonify({
 
         "status": "ok",
 
         "service": "PlantAI",
 
         "model_loaded":
-            MODEL is not None
+            MODEL is not None,
 
-    }
+        "ai_highlight":
+            False,
+
+        "ai_attention_map":
+            True
+
+    })
 
 
 # ============================================================
@@ -356,10 +348,7 @@ def health():
 
 @app.route(
     "/chatbot",
-    methods=[
-        "GET",
-        "POST"
-    ]
+    methods=["GET", "POST"]
 )
 def chatbot():
 
@@ -371,7 +360,6 @@ def chatbot():
             "question",
             ""
         ).strip()
-
 
         if question:
 
@@ -416,7 +404,7 @@ def upload_page():
 
 
 # ============================================================
-# DISEASE FALLBACK
+# FALLBACK DISEASE INFO
 # ============================================================
 
 def fallback_disease_info(
@@ -460,29 +448,14 @@ def calculate_severity(
     prediction
 ):
 
-    """
-    Try the project's severity estimator.
-
-    Different versions of severity.py may have different
-    function signatures, so this function safely tries the
-    common forms.
-
-    Returns:
-
-        severity_level
-        affected_area
-    """
-
-    severity_level = "Not calculated"
+    severity_level = (
+        "Not calculated"
+    )
 
     affected_area = 0
 
 
     try:
-
-        # ----------------------------------------------------
-        # First attempt
-        # ----------------------------------------------------
 
         result = estimate_severity(
             filepath
@@ -496,19 +469,13 @@ def calculate_severity(
 
             if len(result) >= 2:
 
-                severity_level = (
-                    result[0]
-                )
+                severity_level = result[0]
 
-                affected_area = (
-                    result[1]
-                )
+                affected_area = result[1]
 
             elif len(result) == 1:
 
-                severity_level = (
-                    result[0]
-                )
+                severity_level = result[0]
 
 
         elif isinstance(
@@ -517,19 +484,25 @@ def calculate_severity(
         ):
 
             severity_level = result.get(
+
                 "severity",
+
                 result.get(
                     "severity_level",
                     "Not calculated"
                 )
+
             )
 
             affected_area = result.get(
+
                 "affected_area",
+
                 result.get(
                     "area",
                     0
                 )
+
             )
 
 
@@ -551,28 +524,16 @@ def calculate_severity(
             )
 
 
-        print(
-            "Severity:",
-            severity_level
-        )
-
-        print(
-            "Affected area:",
-            affected_area
-        )
-
-
     except TypeError:
-
-        # ----------------------------------------------------
-        # Alternative signature
-        # ----------------------------------------------------
 
         try:
 
             result = estimate_severity(
+
                 filepath,
+
                 prediction
+
             )
 
 
@@ -583,13 +544,9 @@ def calculate_severity(
 
                 if len(result) >= 2:
 
-                    severity_level = (
-                        result[0]
-                    )
+                    severity_level = result[0]
 
-                    affected_area = (
-                        result[1]
-                    )
+                    affected_area = result[1]
 
 
             elif isinstance(
@@ -598,16 +555,22 @@ def calculate_severity(
             ):
 
                 severity_level = result.get(
+
                     "severity",
+
                     result.get(
                         "severity_level",
                         "Not calculated"
                     )
+
                 )
 
                 affected_area = result.get(
+
                     "affected_area",
+
                     0
+
                 )
 
 
@@ -627,10 +590,6 @@ def calculate_severity(
         )
 
 
-    # --------------------------------------------------------
-    # Normalize affected area
-    # --------------------------------------------------------
-
     try:
 
         affected_area = float(
@@ -643,17 +602,16 @@ def calculate_severity(
 
 
     affected_area = max(
+
         0,
+
         min(
             100,
             affected_area
         )
+
     )
 
-
-    # --------------------------------------------------------
-    # Normalize severity
-    # --------------------------------------------------------
 
     if not severity_level:
 
@@ -663,11 +621,14 @@ def calculate_severity(
 
 
     return (
+
         severity_level,
+
         round(
             affected_area,
             2
         )
+
     )
 
 
@@ -711,9 +672,13 @@ def generate_ai_explanation(
         try:
 
             result = generate_explanation(
+
                 prediction,
+
                 confidence,
+
                 info
+
             )
 
             if result is None:
@@ -721,6 +686,7 @@ def generate_ai_explanation(
                 return ""
 
             return str(result)
+
 
         except Exception as e:
 
@@ -785,6 +751,7 @@ def generate_severity_advice_safe(
 
             return result
 
+
         except Exception as e:
 
             print(
@@ -815,113 +782,29 @@ def generate_highlight_safe(
 ):
 
     """
-    Generate AI-highlight image.
+    AI HIGHLIGHT IS INTENTIONALLY DISABLED.
 
-    IMPORTANT:
-    create_highlight() in your project requires:
+    We do NOT call create_highlight().
 
-        input_path
-        output_path
+    This avoids:
+        - extra image processing
+        - duplicate visualization
+        - memory usage
+        - previous create_highlight errors
 
-    Therefore we explicitly provide both.
+    Returns:
+        None
     """
 
-    try:
+    print(
+        "AI Highlight disabled."
+    )
 
-        base_name = os.path.splitext(
-            filename
-        )[0]
-
-        extension = os.path.splitext(
-            filename
-        )[1]
-
-        highlight_filename = (
-            f"{base_name}_highlight"
-            f"{extension}"
-        )
-
-        output_path = os.path.join(
-
-            app.config["UPLOAD_FOLDER"],
-
-            highlight_filename
-
-        )
-
-
-        print(
-            "Creating AI highlight..."
-        )
-
-        print(
-            "Input:",
-            input_path
-        )
-
-        print(
-            "Output:",
-            output_path
-        )
-
-
-        result = create_highlight(
-
-            input_path,
-
-            output_path
-
-        )
-
-
-        # ----------------------------------------------------
-        # Function may return output path
-        # ----------------------------------------------------
-
-        if isinstance(
-            result,
-            str
-        ):
-
-            if os.path.exists(result):
-
-                return os.path.basename(
-                    result
-                )
-
-
-        # ----------------------------------------------------
-        # Our expected output
-        # ----------------------------------------------------
-
-        if os.path.exists(
-            output_path
-        ):
-
-            return highlight_filename
-
-
-        print(
-            "Highlight was not created."
-        )
-
-        return None
-
-
-    except Exception as e:
-
-        print(
-            "Highlight generation failed:",
-            e
-        )
-
-        traceback.print_exc()
-
-        return None
+    return None
 
 
 # ============================================================
-# AI ATTENTION MAP
+# LIGHTWEIGHT ATTENTION MAP
 # ============================================================
 
 def generate_attention_safe(
@@ -930,159 +813,362 @@ def generate_attention_safe(
 ):
 
     """
-    Try the project's highlight module for an attention map.
+    Lightweight browser-safe / Render-safe attention map.
 
-    If your highlight.py exposes a separate attention/Grad-CAM
-    function, this function attempts to use it.
+    IMPORTANT:
 
-    If unavailable, returns None instead of crashing prediction.
+    This is NOT Grad-CAM.
+
+    It does not load another AI model.
+
+    It uses OpenCV image analysis to create a visual
+    attention-style map around non-uniform regions of
+    the plant image.
+
+    This is intentionally lightweight because Render
+    free instances have approximately 512 MB RAM.
     """
+
+    image = None
+
+    hsv = None
+
+    gray = None
+
+    edges = None
+
+    attention = None
+
+    heatmap = None
+
+    overlay = None
 
     try:
 
-        import highlight as highlight_module
+        # ====================================================
+        # READ IMAGE
+        # ====================================================
 
+        image = cv2.imread(
+            input_path
+        )
 
-        function_names = [
-
-            "create_attention_map",
-
-            "create_attention",
-
-            "generate_attention_map",
-
-            "generate_attention",
-
-            "create_gradcam",
-
-            "generate_gradcam",
-
-            "create_grad_cam",
-
-            "generate_grad_cam"
-
-        ]
-
-
-        attention_function = None
-
-
-        for function_name in function_names:
-
-            candidate = getattr(
-
-                highlight_module,
-
-                function_name,
-
-                None
-
-            )
-
-            if callable(candidate):
-
-                attention_function = candidate
-
-                break
-
-
-        if attention_function is None:
+        if image is None:
 
             print(
-                "No attention-map function found "
-                "in highlight.py."
+                "Attention map: image could not be read."
             )
 
             return None
 
 
+        # ====================================================
+        # RESIZE
+        # ====================================================
+
+        height, width = image.shape[:2]
+
+
+        max_dimension = 700
+
+
+        if max(
+            height,
+            width
+        ) > max_dimension:
+
+            scale = (
+                max_dimension
+                /
+                float(
+                    max(
+                        height,
+                        width
+                    )
+                )
+            )
+
+            new_width = max(
+                1,
+                int(
+                    width * scale
+                )
+            )
+
+            new_height = max(
+                1,
+                int(
+                    height * scale
+                )
+            )
+
+
+            image = cv2.resize(
+
+                image,
+
+                (
+                    new_width,
+                    new_height
+                ),
+
+                interpolation=cv2.INTER_AREA
+
+            )
+
+
+        # ====================================================
+        # HSV
+        # ====================================================
+
+        hsv = cv2.cvtColor(
+
+            image,
+
+            cv2.COLOR_BGR2HSV
+
+        )
+
+
+        # ====================================================
+        # LEAF MASK
+        # ====================================================
+
+        lower_green = np.array(
+
+            [25, 30, 30],
+
+            dtype=np.uint8
+
+        )
+
+
+        upper_green = np.array(
+
+            [100, 255, 255],
+
+            dtype=np.uint8
+
+        )
+
+
+        leaf_mask = cv2.inRange(
+
+            hsv,
+
+            lower_green,
+
+            upper_green
+
+        )
+
+
+        # ====================================================
+        # GRAYSCALE
+        # ====================================================
+
+        gray = cv2.cvtColor(
+
+            image,
+
+            cv2.COLOR_BGR2GRAY
+
+        )
+
+
+        # ====================================================
+        # EDGE INFORMATION
+        # ====================================================
+
+        edges = cv2.Canny(
+
+            gray,
+
+            50,
+
+            150
+
+        )
+
+
+        # ====================================================
+        # NON-GREEN / TEXTURE INFORMATION
+        # ====================================================
+
+        non_green = cv2.bitwise_not(
+            leaf_mask
+        )
+
+
+        # ====================================================
+        # COMBINE ATTENTION SIGNALS
+        # ====================================================
+
+        attention = cv2.addWeighted(
+
+            edges,
+
+            0.55,
+
+            non_green,
+
+            0.45,
+
+            0
+
+        )
+
+
+        # ====================================================
+        # BLUR
+        # ====================================================
+
+        attention = cv2.GaussianBlur(
+
+            attention,
+
+            (
+                21,
+                21
+            ),
+
+            0
+
+        )
+
+
+        # ====================================================
+        # NORMALIZE
+        # ====================================================
+
+        min_value = float(
+            attention.min()
+        )
+
+        max_value = float(
+            attention.max()
+        )
+
+
+        if max_value > min_value:
+
+            attention = cv2.normalize(
+
+                attention,
+
+                None,
+
+                0,
+
+                255,
+
+                cv2.NORM_MINMAX
+
+            )
+
+        else:
+
+            attention[:] = 0
+
+
+        attention = np.uint8(
+            attention
+        )
+
+
+        # ====================================================
+        # HEATMAP
+        # ====================================================
+
+        heatmap = cv2.applyColorMap(
+
+            attention,
+
+            cv2.COLORMAP_JET
+
+        )
+
+
+        # ====================================================
+        # OVERLAY
+        # ====================================================
+
+        overlay = cv2.addWeighted(
+
+            image,
+
+            0.55,
+
+            heatmap,
+
+            0.45,
+
+            0
+
+        )
+
+
+        # ====================================================
+        # OUTPUT NAME
+        # ====================================================
+
         base_name = os.path.splitext(
             filename
         )[0]
 
-        extension = os.path.splitext(
-            filename
-        )[1]
-
 
         attention_filename = (
-            f"{base_name}_attention"
-            f"{extension}"
+
+            f"{base_name}_attention.jpg"
+
         )
 
 
         output_path = os.path.join(
 
-            app.config["UPLOAD_FOLDER"],
+            app.config[
+                "UPLOAD_FOLDER"
+            ],
 
             attention_filename
 
         )
 
 
-        print(
-            "Creating AI attention map..."
+        # ====================================================
+        # SAVE
+        # ====================================================
+
+        success = cv2.imwrite(
+
+            output_path,
+
+            overlay,
+
+            [
+                cv2.IMWRITE_JPEG_QUALITY,
+                85
+            ]
+
         )
 
 
-        # ----------------------------------------------------
-        # Try input + output
-        # ----------------------------------------------------
+        if not success:
 
-        try:
-
-            result = attention_function(
-
-                input_path,
-
-                output_path
-
+            print(
+                "Attention map save failed."
             )
 
-
-        except TypeError:
-
-            # ------------------------------------------------
-            # Try only input
-            # ------------------------------------------------
-
-            result = attention_function(
-                input_path
-            )
-
-
-        # ----------------------------------------------------
-        # Function returned path
-        # ----------------------------------------------------
-
-        if isinstance(
-            result,
-            str
-        ):
-
-            if os.path.exists(result):
-
-                return os.path.basename(
-                    result
-                )
-
-
-        # ----------------------------------------------------
-        # Expected output
-        # ----------------------------------------------------
-
-        if os.path.exists(
-            output_path
-        ):
-
-            return attention_filename
+            return None
 
 
         print(
-            "Attention map was not created."
+            "Attention map created:",
+            attention_filename
         )
 
-        return None
+
+        return attention_filename
 
 
     except Exception as e:
@@ -1095,6 +1181,29 @@ def generate_attention_safe(
         traceback.print_exc()
 
         return None
+
+
+    finally:
+
+        # ====================================================
+        # RELEASE NUMPY / OPENCV MEMORY
+        # ====================================================
+
+        image = None
+
+        hsv = None
+
+        gray = None
+
+        edges = None
+
+        attention = None
+
+        heatmap = None
+
+        overlay = None
+
+        gc.collect()
 
 
 # ============================================================
@@ -1112,26 +1221,25 @@ def generate_report_safe(
     severity_advice
 ):
 
-    """
-    Generate PDF report safely.
-
-    Failure to generate PDF must NOT make prediction fail.
-    """
-
     try:
 
         base_name = os.path.splitext(
             filename
         )[0]
 
+
         report_filename = (
+
             f"{base_name}_report.pdf"
+
         )
 
 
         report_path = os.path.join(
 
-            app.config["UPLOAD_FOLDER"],
+            app.config[
+                "UPLOAD_FOLDER"
+            ],
 
             report_filename
 
@@ -1142,10 +1250,6 @@ def generate_report_safe(
             "Creating PDF report..."
         )
 
-
-        # ----------------------------------------------------
-        # Attempt common report_generator signatures
-        # ----------------------------------------------------
 
         try:
 
@@ -1207,10 +1311,6 @@ def generate_report_safe(
                     )
 
 
-        # ----------------------------------------------------
-        # If function returns a path
-        # ----------------------------------------------------
-
         if isinstance(
             result,
             str
@@ -1222,10 +1322,6 @@ def generate_report_safe(
                     result
                 )
 
-
-        # ----------------------------------------------------
-        # If function returned a pathlib path
-        # ----------------------------------------------------
 
         if result is not None:
 
@@ -1248,10 +1344,6 @@ def generate_report_safe(
                 pass
 
 
-        # ----------------------------------------------------
-        # Expected output path
-        # ----------------------------------------------------
-
         if os.path.exists(
             report_path
         ):
@@ -1259,12 +1351,12 @@ def generate_report_safe(
             return report_filename
 
 
-        # ----------------------------------------------------
-        # Search for generated PDF
-        # ----------------------------------------------------
-
         for candidate in os.listdir(
-            app.config["UPLOAD_FOLDER"]
+
+            app.config[
+                "UPLOAD_FOLDER"
+            ]
+
         ):
 
             if (
@@ -1304,7 +1396,7 @@ def generate_report_safe(
 
 
 # ============================================================
-# SAVE HISTORY
+# HISTORY
 # ============================================================
 
 def save_history_safe(
@@ -1340,6 +1432,7 @@ def save_history_safe(
 
         )
 
+
         print(
             "History saved."
         )
@@ -1358,7 +1451,7 @@ def save_history_safe(
 
 
 # ============================================================
-# MAIN WEB UPLOAD
+# MAIN UPLOAD
 # ============================================================
 
 @app.route(
@@ -1397,7 +1490,7 @@ def upload():
 
 
     # ========================================================
-    # CHECK EXTENSION
+    # VALIDATE FILE
     # ========================================================
 
     if not allowed_file(
@@ -1415,7 +1508,7 @@ def upload():
 
 
     # ========================================================
-    # UNIQUE FILE NAME
+    # UNIQUE FILE
     # ========================================================
 
     filename = create_unique_filename(
@@ -1425,7 +1518,9 @@ def upload():
 
     filepath = os.path.join(
 
-        app.config["UPLOAD_FOLDER"],
+        app.config[
+            "UPLOAD_FOLDER"
+        ],
 
         filename
 
@@ -1433,7 +1528,7 @@ def upload():
 
 
     # ========================================================
-    # SAVE IMAGE
+    # SAVE
     # ========================================================
 
     try:
@@ -1497,11 +1592,6 @@ def upload():
             f"{confidence:.2f}%"
         )
 
-        print(
-            "Status:",
-            confidence_status
-        )
-
 
     except Exception as e:
 
@@ -1526,13 +1616,11 @@ def upload():
 
     finally:
 
-        # Release prediction tensors
-
         safe_cleanup()
 
 
     # ========================================================
-    # DISEASE LOOKUP
+    # DISEASE INFORMATION
     # ========================================================
 
     try:
@@ -1540,7 +1628,6 @@ def upload():
         info = get_disease(
             prediction
         )
-
 
     except Exception as e:
 
@@ -1554,12 +1641,6 @@ def upload():
 
     if info is None:
 
-        print(
-            "Disease information missing:"
-            ,
-            prediction
-        )
-
         info = fallback_disease_info(
             prediction
         )
@@ -1571,30 +1652,24 @@ def upload():
 
     if confidence < 40:
 
-        try:
+        return render_template(
 
-            return render_template(
+            "unknown.html",
 
-                "unknown.html",
+            image=filename,
 
-                image=filename,
+            confidence=round(
+                confidence,
+                2
+            ),
 
-                confidence=round(
-                    confidence,
-                    2
-                ),
+            confidence_status=
+                confidence_status,
 
-                confidence_status=
-                    confidence_status,
+            top_predictions=
+                top_predictions
 
-                top_predictions=
-                    top_predictions
-
-            )
-
-        finally:
-
-            safe_cleanup()
+        )
 
 
     # ========================================================
@@ -1602,8 +1677,11 @@ def upload():
     # ========================================================
 
     (
+
         severity_level,
+
         affected_area
+
     ) = calculate_severity(
 
         filepath,
@@ -1637,6 +1715,7 @@ def upload():
     # ========================================================
 
     severity_advice = (
+
         generate_severity_advice_safe(
 
             severity_level,
@@ -1646,6 +1725,7 @@ def upload():
             affected_area
 
         )
+
     )
 
 
@@ -1653,14 +1733,13 @@ def upload():
     # AI HIGHLIGHT
     # ========================================================
 
-    highlight_name = (
-        generate_highlight_safe(
+    # INTENTIONALLY DISABLED
 
-            filepath,
+    highlight_name = None
 
-            filename
 
-        )
+    print(
+        "AI Highlight: DISABLED"
     )
 
 
@@ -1669,6 +1748,7 @@ def upload():
     # ========================================================
 
     attention_name = (
+
         generate_attention_safe(
 
             filepath,
@@ -1676,11 +1756,12 @@ def upload():
             filename
 
         )
+
     )
 
 
     # ========================================================
-    # SAVE HISTORY
+    # HISTORY
     # ========================================================
 
     save_history_safe(
@@ -1701,10 +1782,11 @@ def upload():
 
 
     # ========================================================
-    # PDF REPORT
+    # PDF
     # ========================================================
 
     report_name = (
+
         generate_report_safe(
 
             filename,
@@ -1724,6 +1806,7 @@ def upload():
             severity_advice
 
         )
+
     )
 
 
@@ -1735,7 +1818,7 @@ def upload():
 
 
     # ========================================================
-    # RESULT PAGE
+    # RESULT
     # ========================================================
 
     print()
@@ -1744,17 +1827,22 @@ def upload():
     )
 
     print(
-        "Highlight:",
+        "Original:",
+        filename
+    )
+
+    print(
+        "AI Highlight:",
         highlight_name
     )
 
     print(
-        "Attention:",
+        "AI Attention:",
         attention_name
     )
 
     print(
-        "Report:",
+        "PDF:",
         report_name
     )
 
@@ -1767,8 +1855,10 @@ def upload():
 
         image=filename,
 
-        highlight=highlight_name,
+        # Highlight disabled
+        highlight=None,
 
+        # Attention map enabled
         gradcam=attention_name,
 
         attention=attention_name,
@@ -1853,7 +1943,7 @@ def api_predict():
 
 
     # ========================================================
-    # CHECK EXTENSION
+    # VALIDATE
     # ========================================================
 
     if not allowed_file(
@@ -1871,7 +1961,7 @@ def api_predict():
 
 
     # ========================================================
-    # UNIQUE FILE
+    # FILE
     # ========================================================
 
     filename = create_unique_filename(
@@ -1881,16 +1971,14 @@ def api_predict():
 
     filepath = os.path.join(
 
-        app.config["UPLOAD_FOLDER"],
+        app.config[
+            "UPLOAD_FOLDER"
+        ],
 
         filename
 
     )
 
-
-    # ========================================================
-    # SAVE IMAGE
-    # ========================================================
 
     try:
 
@@ -1898,13 +1986,7 @@ def api_predict():
             filepath
         )
 
-
     except Exception as e:
-
-        print(
-            "File save error:",
-            e
-        )
 
         return jsonify({
 
@@ -1971,7 +2053,7 @@ def api_predict():
 
 
     # ========================================================
-    # DISEASE LOOKUP
+    # DISEASE INFO
     # ========================================================
 
     try:
@@ -1980,12 +2062,7 @@ def api_predict():
             prediction
         )
 
-    except Exception as e:
-
-        print(
-            "Disease lookup error:",
-            e
-        )
+    except Exception:
 
         info = None
 
@@ -2047,8 +2124,11 @@ def api_predict():
     # ========================================================
 
     (
+
         severity_level,
+
         affected_area
+
     ) = calculate_severity(
 
         filepath,
@@ -2082,6 +2162,7 @@ def api_predict():
     # ========================================================
 
     severity_advice = (
+
         generate_severity_advice_safe(
 
             severity_level,
@@ -2091,6 +2172,7 @@ def api_predict():
             affected_area
 
         )
+
     )
 
 
@@ -2111,6 +2193,23 @@ def api_predict():
         severity_level,
 
         affected_area
+
+    )
+
+
+    # ========================================================
+    # LIGHTWEIGHT ATTENTION MAP
+    # ========================================================
+
+    attention_name = (
+
+        generate_attention_safe(
+
+            filepath,
+
+            filename
+
+        )
 
     )
 
@@ -2197,7 +2296,15 @@ def api_predict():
             severity_advice,
 
         "top_predictions":
-            top_predictions
+            top_predictions,
+
+        # Highlight intentionally disabled
+        "highlight":
+            None,
+
+        # Attention enabled
+        "attention":
+            attention_name
 
     }
 
@@ -2263,7 +2370,9 @@ def uploaded_file(
 
     return send_from_directory(
 
-        app.config["UPLOAD_FOLDER"],
+        app.config[
+            "UPLOAD_FOLDER"
+        ],
 
         filename
 
@@ -2271,12 +2380,10 @@ def uploaded_file(
 
 
 # ============================================================
-# ERROR HANDLERS
+# 413 ERROR
 # ============================================================
 
-@app.errorhandler(
-    413
-)
+@app.errorhandler(413)
 def file_too_large(error):
 
     return (
@@ -2289,9 +2396,11 @@ def file_too_large(error):
     )
 
 
-@app.errorhandler(
-    500
-)
+# ============================================================
+# 500 ERROR
+# ============================================================
+
+@app.errorhandler(500)
 def internal_error(error):
 
     print(
@@ -2315,7 +2424,7 @@ def internal_error(error):
 
 
 # ============================================================
-# RUN LOCAL DEVELOPMENT
+# LOCAL DEVELOPMENT
 # ============================================================
 
 if __name__ == "__main__":
