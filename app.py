@@ -1,14 +1,15 @@
 ﻿# -*- coding: utf-8 -*-
 
 import os
-import inspect
+import uuid
 import traceback
 
 from flask import (
     Flask,
     render_template,
     request,
-    send_from_directory
+    send_from_directory,
+    jsonify
 )
 
 from werkzeug.utils import secure_filename
@@ -39,6 +40,8 @@ from severity_advice import get_severity_advice
 
 from highlight import create_highlight
 
+from gradcam import create_gradcam
+
 from report_generator import create_report
 
 from database import create_tables
@@ -56,17 +59,12 @@ app = Flask(__name__)
 
 
 # ============================================================
-# BASE DIRECTORY
+# CONFIGURATION
 # ============================================================
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
-
-
-# ============================================================
-# UPLOAD DIRECTORY
-# ============================================================
 
 UPLOAD_FOLDER = os.path.join(
     BASE_DIR,
@@ -82,343 +80,114 @@ os.makedirs(
 
 
 # ============================================================
-# MAX UPLOAD SIZE
-# ============================================================
-
-# 10 MB maximum image upload
-
-app.config["MAX_CONTENT_LENGTH"] = (
-    10 * 1024 * 1024
-)
-
-
-# ============================================================
-# DATABASE INITIALIZATION
+# DATABASE
 # ============================================================
 
 try:
 
     create_tables()
 
-    print()
-    print("=" * 60)
-    print("Database tables initialized.")
-    print("=" * 60)
+    print(
+        "Database tables initialized."
+    )
 
 except Exception as e:
 
-    print()
-    print("=" * 60)
-    print("Database initialization error")
-    print("=" * 60)
-
-    print(e)
-
-    traceback.print_exc()
+    print(
+        "Database initialization error:",
+        e
+    )
 
 
 # ============================================================
-# HELPER
+# LOAD MODEL
+#
+# Model is already loaded by predict.py.
+# We retrieve it here for Grad-CAM.
+# ============================================================
+
+try:
+
+    AI_MODEL = get_model()
+
+    AI_TRANSFORM = get_transform()
+
+    print(
+        "AI model ready for application."
+    )
+
+except Exception as e:
+
+    AI_MODEL = None
+
+    AI_TRANSFORM = None
+
+    print(
+        "WARNING: Could not initialize AI model:",
+        e
+    )
+
+
+# ============================================================
+# SAFE FUNCTION CALL
 # ============================================================
 
 def safe_call(
     function,
-    possible_values=None,
-    default=None,
-    function_name="function"
+    **kwargs
 ):
 
-    """
-    Safely call a project function.
-
-    This helper allows PlantAI to work even if the helper
-    functions have slightly different parameter names.
-
-    It examines the function signature and supplies the
-    parameters that are available.
-    """
-
-    if possible_values is None:
-
-        possible_values = {}
-
-
     try:
-
-        signature = inspect.signature(
-            function
-        )
-
-        parameters = signature.parameters
-
-
-        kwargs = {}
-
-
-        # ----------------------------------------------------
-        # Match parameters by name
-        # ----------------------------------------------------
-
-        for parameter_name in parameters:
-
-            parameter = parameters[
-                parameter_name
-            ]
-
-
-            # Ignore *args / **kwargs
-
-            if parameter.kind in (
-                inspect.Parameter.VAR_POSITIONAL,
-                inspect.Parameter.VAR_KEYWORD
-            ):
-
-                continue
-
-
-            # ------------------------------------------------
-            # Exact parameter match
-            # ------------------------------------------------
-
-            if parameter_name in possible_values:
-
-                kwargs[
-                    parameter_name
-                ] = possible_values[
-                    parameter_name
-                ]
-
-                continue
-
-
-            # ------------------------------------------------
-            # Common aliases
-            # ------------------------------------------------
-
-            aliases = {
-
-                "image":
-                    [
-                        "image_path",
-                        "filepath",
-                        "file_path",
-                        "path",
-                        "image_file"
-                    ],
-
-                "image_path":
-                    [
-                        "image",
-                        "filepath",
-                        "file_path",
-                        "path",
-                        "image_file"
-                    ],
-
-                "filepath":
-                    [
-                        "image_path",
-                        "image",
-                        "file_path",
-                        "path"
-                    ],
-
-                "file_path":
-                    [
-                        "filepath",
-                        "image_path",
-                        "image",
-                        "path"
-                    ],
-
-                "prediction":
-                    [
-                        "disease",
-                        "class_name",
-                        "label"
-                    ],
-
-                "disease":
-                    [
-                        "prediction",
-                        "class_name",
-                        "label"
-                    ],
-
-                "confidence":
-                    [
-                        "score",
-                        "probability"
-                    ],
-
-                "info":
-                    [
-                        "disease_info",
-                        "disease_data"
-                    ],
-
-                "severity":
-                    [
-                        "severity_level"
-                    ],
-
-                "affected_area":
-                    [
-                        "area",
-                        "percentage",
-                        "affected_percentage"
-                    ],
-
-                "plant":
-                    [
-                        "plant_name"
-                    ],
-
-                "filename":
-                    [
-                        "file_name"
-                    ],
-
-                "explanation":
-                    [
-                        "ai_explanation"
-                    ],
-
-                "severity_advice":
-                    [
-                        "advice"
-                    ]
-
-            }
-
-
-            found = False
-
-
-            # ------------------------------------------------
-            # Search aliases
-            # ------------------------------------------------
-
-            if parameter_name in aliases:
-
-                for alias in aliases[
-                    parameter_name
-                ]:
-
-                    if alias in possible_values:
-
-                        kwargs[
-                            parameter_name
-                        ] = possible_values[
-                            alias
-                        ]
-
-                        found = True
-
-                        break
-
-
-            if found:
-
-                continue
-
-
-            # ------------------------------------------------
-            # Parameter has default
-            # ------------------------------------------------
-
-            if (
-                parameter.default
-                is not inspect.Parameter.empty
-            ):
-
-                continue
-
-
-        # ----------------------------------------------------
-        # Call function
-        # ----------------------------------------------------
 
         return function(
             **kwargs
         )
 
-
     except Exception as e:
 
         print()
         print(
-            f"{function_name} error:"
+            "=" * 60
         )
 
-        print(e)
+        print(
+            f"ERROR in {function.__name__}"
+        )
+
+        print(
+            str(e)
+        )
+
+        print(
+            "=" * 60
+        )
 
         traceback.print_exc()
 
-        return default
+        return None
 
 
 # ============================================================
-# NORMALIZE FEATURE RESULT
+# CREATE UNIQUE FILE NAME
 # ============================================================
 
-def normalize_filename(
-    value
+def make_output_filename(
+    original_filename,
+    suffix
 ):
 
-    """
-    Convert a returned file/path value into a filename
-    usable by /uploads/<filename>.
-    """
+    base_name = os.path.splitext(
+        secure_filename(
+            original_filename
+        )
+    )[0]
 
-    if value is None:
+    unique_id = uuid.uuid4().hex[:10]
 
-        return None
-
-
-    if isinstance(
-        value,
-        dict
-    ):
-
-        for key in [
-            "filename",
-            "file",
-            "path",
-            "file_path",
-            "image",
-            "output"
-        ]:
-
-            if key in value:
-
-                value = value[key]
-
-                break
-
-
-    if not isinstance(
-        value,
-        str
-    ):
-
-        return None
-
-
-    value = value.strip()
-
-
-    if not value:
-
-        return None
-
-
-    # --------------------------------------------------------
-    # Convert path to basename
-    # --------------------------------------------------------
-
-    return os.path.basename(
-        value
+    return (
+        f"{base_name}_"
+        f"{unique_id}_"
+        f"{suffix}.jpg"
     )
 
 
@@ -474,15 +243,11 @@ def home():
 
 @app.route(
     "/chatbot",
-    methods=[
-        "GET",
-        "POST"
-    ]
+    methods=["GET", "POST"]
 )
 def chatbot():
 
     answer = ""
-
 
     if request.method == "POST":
 
@@ -535,7 +300,7 @@ def upload_page():
 
 
 # ============================================================
-# MAIN AI UPLOAD
+# MAIN WEB UPLOAD
 # ============================================================
 
 @app.route(
@@ -551,7 +316,7 @@ def upload():
 
 
     # ========================================================
-    # CHECK FILE
+    # CHECK IMAGE
     # ========================================================
 
     if "image" not in request.files:
@@ -569,6 +334,10 @@ def upload():
     file = request.files["image"]
 
 
+    # ========================================================
+    # CHECK FILE NAME
+    # ========================================================
+
     if file.filename == "":
 
         print(
@@ -582,7 +351,7 @@ def upload():
 
 
     # ========================================================
-    # SECURE FILENAME
+    # SECURE FILE NAME
     # ========================================================
 
     filename = secure_filename(
@@ -592,6 +361,10 @@ def upload():
 
     if not filename:
 
+        print(
+            "ERROR: Invalid filename."
+        )
+
         return (
             "Invalid file name.",
             400
@@ -599,37 +372,17 @@ def upload():
 
 
     # ========================================================
-    # CREATE UNIQUE FILENAME
+    # SAVE ORIGINAL IMAGE
     # ========================================================
-
-    import uuid
-
-
-    extension = os.path.splitext(
-        filename
-    )[1].lower()
-
-
-    unique_filename = (
-        uuid.uuid4().hex
-        + extension
-    )
-
 
     filepath = os.path.join(
 
-        app.config[
-            "UPLOAD_FOLDER"
-        ],
+        app.config["UPLOAD_FOLDER"],
 
-        unique_filename
+        filename
 
     )
 
-
-    # ========================================================
-    # SAVE IMAGE
-    # ========================================================
 
     try:
 
@@ -638,7 +391,7 @@ def upload():
         )
 
         print(
-            "Image saved:",
+            "Original image saved:",
             filepath
         )
 
@@ -662,9 +415,9 @@ def upload():
     # ========================================================
 
     print()
-    print("-" * 70)
-    print("STEP 1: AI PREDICTION")
-    print("-" * 70)
+    print(
+        "Starting AI prediction..."
+    )
 
 
     try:
@@ -686,8 +439,7 @@ def upload():
         )
 
         print(
-            f"Confidence: "
-            f"{confidence:.2f}%"
+            f"Confidence: {confidence:.2f}%"
         )
 
         print(
@@ -705,7 +457,6 @@ def upload():
 
         traceback.print_exc()
 
-
         return (
 
             f"Prediction failed: {str(e)}",
@@ -716,13 +467,13 @@ def upload():
 
 
     # ========================================================
-    # DISEASE DATABASE
+    # DISEASE DATABASE LOOKUP
     # ========================================================
 
     print()
-    print("-" * 70)
-    print("STEP 2: DISEASE DATABASE")
-    print("-" * 70)
+    print(
+        "Looking up disease information..."
+    )
 
 
     try:
@@ -744,59 +495,35 @@ def upload():
 
 
     # ========================================================
-    # FALLBACK
+    # FALLBACK DISEASE INFORMATION
     # ========================================================
 
     if info is None:
 
         print(
-            "WARNING: Disease not found:"
-        )
-
-        print(
+            "WARNING: Disease information not found:",
             prediction
         )
 
 
         info = {
 
-            "plant":
-                "Unknown",
+            "plant": "Unknown",
 
-            "disease":
-                prediction,
+            "disease": prediction,
 
             "cause":
                 "Information not available",
 
-            "symptoms":
-                [],
+            "symptoms": [],
 
-            "treatment":
-                [],
+            "treatment": [],
 
-            "organic_treatment":
-                [],
+            "organic_treatment": [],
 
-            "prevention":
-                []
+            "prevention": []
 
         }
-
-
-    # ========================================================
-    # ENSURE DISEASE NAME
-    # ========================================================
-
-    disease_name = info.get(
-        "disease",
-        prediction
-    )
-
-
-    if not disease_name:
-
-        disease_name = prediction
 
 
     print(
@@ -807,10 +534,12 @@ def upload():
         )
     )
 
-
     print(
         "Disease:",
-        disease_name
+        info.get(
+            "disease",
+            prediction
+        )
     )
 
 
@@ -830,691 +559,404 @@ def upload():
 
             "unknown.html",
 
-            image=unique_filename,
+            image=filename,
 
             confidence=round(
                 confidence,
                 2
-            ),
-
-            prediction=prediction,
-
-            top_predictions=top_predictions,
-
-            confidence_status=
-                confidence_status
+            )
 
         )
 
 
     # ========================================================
-    # STEP 3 - AI HIGHLIGHT
     # ========================================================
-
-    print()
-    print("-" * 70)
-    print("STEP 3: AI HIGHLIGHT")
-    print("-" * 70)
-
+    # AI HIGHLIGHT
+    # ========================================================
+    # ========================================================
 
     highlight_name = None
 
+    highlight_path = None
+
+
+    print()
+    print(
+        "Generating AI Highlight..."
+    )
+
 
     try:
 
-        highlight_result = safe_call(
-
-            create_highlight,
-
-            {
-
-                "image_path":
-                    filepath,
-
-                "filepath":
-                    filepath,
-
-                "image":
-                    filepath,
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name
-
-            },
-
-            default=None,
-
-            function_name=
-                "AI Highlight"
-
+        highlight_name = make_output_filename(
+            filename,
+            "highlight"
         )
 
 
-        highlight_name = normalize_filename(
-            highlight_result
-        )
+        highlight_path = os.path.join(
 
+            app.config["UPLOAD_FOLDER"],
 
-        print(
-            "Highlight result:",
-            highlight_result
-        )
-
-
-        print(
-            "Highlight filename:",
             highlight_name
+
         )
+
+
+        highlight_result = create_highlight(
+
+            filepath,
+
+            highlight_path
+
+        )
+
+
+        # create_highlight returns True/False
+
+        if (
+            highlight_result
+            and
+            os.path.exists(
+                highlight_path
+            )
+        ):
+
+            print(
+                "✅ AI Highlight created:",
+                highlight_path
+            )
+
+        else:
+
+            print(
+                "⚠️ AI Highlight was not created."
+            )
+
+            highlight_name = None
+
+            highlight_path = None
 
 
     except Exception as e:
 
         print(
-            "Highlight failed:",
+            "AI Highlight error:",
             e
         )
 
         traceback.print_exc()
 
+        highlight_name = None
+
+        highlight_path = None
+
 
     # ========================================================
-    # STEP 4 - AI ATTENTION MAP / GRAD-CAM
     # ========================================================
-
-    print()
-    print("-" * 70)
-    print("STEP 4: AI ATTENTION MAP")
-    print("-" * 70)
-
+    # AI ATTENTION MAP / GRAD-CAM
+    # ========================================================
+    # ========================================================
 
     gradcam_name = None
 
+    gradcam_path = None
 
-    # --------------------------------------------------------
-    # Try importing Grad-CAM module
-    # --------------------------------------------------------
+
+    print()
+    print(
+        "Generating AI Attention Map..."
+    )
+
 
     try:
 
-        from gradcam import create_gradcam
+        if (
+            AI_MODEL is not None
+            and
+            AI_TRANSFORM is not None
+        ):
 
 
-        gradcam_result = safe_call(
+            # ------------------------------------------------
+            # Load image for Grad-CAM
+            # ------------------------------------------------
 
-            create_gradcam,
+            from PIL import Image
 
-            {
-
-                "image_path":
-                    filepath,
-
-                "filepath":
-                    filepath,
-
-                "image":
-                    filepath,
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name,
-
-                "model":
-                    get_model(),
-
-                "transform":
-                    get_transform(),
-
-                "predicted_class":
-                    prediction
-
-            },
-
-            default=None,
-
-            function_name=
-                "Grad-CAM"
-
-        )
+            image = Image.open(
+                filepath
+            ).convert(
+                "RGB"
+            )
 
 
-        gradcam_name = normalize_filename(
-            gradcam_result
-        )
+            # ------------------------------------------------
+            # Apply same transform as prediction
+            # ------------------------------------------------
+
+            image_tensor = AI_TRANSFORM(
+                image
+            )
 
 
-        print(
-            "Grad-CAM result:",
-            gradcam_result
-        )
+            image_tensor = (
+                image_tensor
+                .unsqueeze(0)
+            )
 
 
-        print(
-            "Grad-CAM filename:",
-            gradcam_name
-        )
+            # ------------------------------------------------
+            # Move tensor to same device as model
+            # ------------------------------------------------
+
+            try:
+
+                device = next(
+                    AI_MODEL.parameters()
+                ).device
+
+                image_tensor = (
+                    image_tensor.to(
+                        device
+                    )
+                )
+
+            except Exception as e:
+
+                print(
+                    "Could not determine model device:",
+                    e
+                )
 
 
-    except ImportError:
+            # ------------------------------------------------
+            # Output filename
+            # ------------------------------------------------
 
-        print(
-            "Grad-CAM module not available."
-        )
+            gradcam_name = make_output_filename(
+                filename,
+                "attention"
+            )
+
+
+            gradcam_path = os.path.join(
+
+                app.config["UPLOAD_FOLDER"],
+
+                gradcam_name
+
+            )
+
+
+            # ------------------------------------------------
+            # Create Grad-CAM
+            # ------------------------------------------------
+
+            gradcam_result = create_gradcam(
+
+                AI_MODEL,
+
+                image_tensor,
+
+                filepath,
+
+                gradcam_path
+
+            )
+
+
+            if (
+                gradcam_result
+                and
+                os.path.exists(
+                    gradcam_path
+                )
+            ):
+
+                print(
+                    "✅ AI Attention Map created:",
+                    gradcam_path
+                )
+
+            else:
+
+                print(
+                    "⚠️ AI Attention Map was not created."
+                )
+
+                gradcam_name = None
+
+                gradcam_path = None
+
+
+        else:
+
+            print(
+                "⚠️ AI model unavailable for Grad-CAM."
+            )
 
 
     except Exception as e:
 
         print(
-            "Grad-CAM failed:",
+            "AI Attention Map error:",
             e
         )
 
         traceback.print_exc()
 
+        gradcam_name = None
+
+        gradcam_path = None
+
 
     # ========================================================
-    # STEP 5 - SEVERITY
+    # ========================================================
+    # SEVERITY
+    # ========================================================
     # ========================================================
 
-    print()
-    print("-" * 70)
-    print("STEP 5: SEVERITY ANALYSIS")
-    print("-" * 70)
-
-
-    severity_level = (
-        "Not calculated"
-    )
+    severity_level = "Unknown"
 
     affected_area = 0
 
 
+    print()
+    print(
+        "Calculating severity..."
+    )
+
+
     try:
 
-        severity_result = safe_call(
-
-            estimate_severity,
-
-            {
-
-                "image_path":
-                    filepath,
-
-                "filepath":
-                    filepath,
-
-                "image":
-                    filepath,
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name
-
-            },
-
-            default=None,
-
-            function_name=
-                "Severity analysis"
-
+        severity_result = estimate_severity(
+            filepath
         )
 
-
-        print(
-            "Severity raw result:",
-            severity_result
-        )
-
-
-        # ----------------------------------------------------
-        # Dictionary result
-        # ----------------------------------------------------
 
         if isinstance(
             severity_result,
             dict
         ):
 
-            severity_level = (
-                severity_result.get(
-                    "severity",
-                    severity_result.get(
-                        "level",
-                        "Not calculated"
-                    )
-                )
+            severity_level = severity_result.get(
+                "level",
+                "Unknown"
+            )
+
+            affected_area = severity_result.get(
+                "area",
+                0
             )
 
 
-            affected_area = (
-                severity_result.get(
-                    "affected_area",
-                    severity_result.get(
-                        "area",
-                        severity_result.get(
-                            "percentage",
-                            0
-                        )
-                    )
-                )
-            )
+        print(
+            "Severity:",
+            severity_level
+        )
 
-
-        # ----------------------------------------------------
-        # Tuple/list result
-        # ----------------------------------------------------
-
-        elif isinstance(
-            severity_result,
-            (tuple, list)
-        ):
-
-            if len(
-                severity_result
-            ) >= 1:
-
-                severity_level = (
-                    severity_result[0]
-                )
-
-
-            if len(
-                severity_result
-            ) >= 2:
-
-                affected_area = (
-                    severity_result[1]
-                )
-
-
-        # ----------------------------------------------------
-        # String result
-        # ----------------------------------------------------
-
-        elif isinstance(
-            severity_result,
-            str
-        ):
-
-            severity_level = (
-                severity_result
-            )
+        print(
+            "Affected area:",
+            affected_area,
+            "%"
+        )
 
 
     except Exception as e:
 
         print(
-            "Severity analysis failed:",
+            "Severity error:",
             e
         )
 
         traceback.print_exc()
 
 
-    # ========================================================
-    # NORMALIZE AFFECTED AREA
-    # ========================================================
-
-    try:
-
-        affected_area = float(
-            affected_area
-        )
-
-        affected_area = round(
-            affected_area,
-            2
-        )
-
-    except Exception:
+        severity_level = "Unknown"
 
         affected_area = 0
 
 
-    print(
-        "Severity:",
-        severity_level
-    )
-
-    print(
-        "Affected area:",
-        affected_area
-    )
-
-
     # ========================================================
-    # STEP 6 - AI EXPLANATION
     # ========================================================
+    # SEVERITY ADVICE
+    # ========================================================
+    # ========================================================
+
+    severity_advice = None
+
 
     print()
-    print("-" * 70)
-    print("STEP 6: AI EXPLANATION")
-    print("-" * 70)
+    print(
+        "Generating severity advice..."
+    )
 
+
+    try:
+
+        severity_advice = get_severity_advice(
+            severity_level
+        )
+
+
+        if severity_advice is None:
+
+            severity_advice = {
+
+                "message":
+                    "Unable to determine severity advice.",
+
+                "actions": []
+
+            }
+
+
+        print(
+            "Severity advice generated."
+        )
+
+
+    except Exception as e:
+
+        print(
+            "Severity advice error:",
+            e
+        )
+
+        traceback.print_exc()
+
+
+        severity_advice = {
+
+            "message":
+                "Unable to determine severity advice.",
+
+            "actions": []
+
+        }
+
+
+    # ========================================================
+    # ========================================================
+    # AI EXPLANATION
+    # ========================================================
+    # ========================================================
 
     explanation = ""
 
 
-    try:
-
-        explanation_result = safe_call(
-
-            generate_explanation,
-
-            {
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name,
-
-                "confidence":
-                    confidence,
-
-                "info":
-                    info,
-
-                "plant":
-                    info.get(
-                        "plant",
-                        "Unknown"
-                    ),
-
-                "severity":
-                    severity_level,
-
-                "affected_area":
-                    affected_area,
-
-                "top_predictions":
-                    top_predictions
-
-            },
-
-            default="",
-
-            function_name=
-                "AI explanation"
-
-        )
-
-
-        if explanation_result is not None:
-
-            if isinstance(
-                explanation_result,
-                dict
-            ):
-
-                explanation = (
-                    explanation_result.get(
-                        "explanation",
-                        explanation_result.get(
-                            "text",
-                            ""
-                        )
-                    )
-                )
-
-            else:
-
-                explanation = str(
-                    explanation_result
-                )
-
-
-        print(
-            "Explanation:",
-            explanation
-        )
-
-
-    except Exception as e:
-
-        print(
-            "Explanation failed:",
-            e
-        )
-
-        traceback.print_exc()
-
-
-    # ========================================================
-    # STEP 7 - SEVERITY ADVICE
-    # ========================================================
-
     print()
-    print("-" * 70)
-    print("STEP 7: SEVERITY ADVICE")
-    print("-" * 70)
-
-
-    severity_advice = ""
+    print(
+        "Generating AI explanation..."
+    )
 
 
     try:
 
-        advice_result = safe_call(
+        explanation = generate_explanation(
 
-            get_severity_advice,
-
-            {
-
-                "severity":
-                    severity_level,
-
-                "severity_level":
-                    severity_level,
-
-                "affected_area":
-                    affected_area,
-
-                "area":
-                    affected_area,
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name,
-
-                "info":
-                    info
-
-            },
-
-            default="",
-
-            function_name=
-                "Severity advice"
-
-        )
-
-
-        if advice_result is not None:
-
-            if isinstance(
-                advice_result,
-                dict
-            ):
-
-                severity_advice = (
-                    advice_result.get(
-                        "advice",
-                        advice_result.get(
-                            "text",
-                            ""
-                        )
-                    )
-                )
-
-            else:
-
-                severity_advice = str(
-                    advice_result
-                )
-
-
-        print(
-            "Severity advice:",
-            severity_advice
-        )
-
-
-    except Exception as e:
-
-        print(
-            "Severity advice failed:",
-            e
-        )
-
-        traceback.print_exc()
-
-
-    # ========================================================
-    # STEP 8 - PDF REPORT
-    # ========================================================
-
-    print()
-    print("-" * 70)
-    print("STEP 8: PDF REPORT")
-    print("-" * 70)
-
-
-    report_name = None
-
-
-    try:
-
-        report_result = safe_call(
-
-            create_report,
-
-            {
-
-                "image_path":
-                    filepath,
-
-                "filepath":
-                    filepath,
-
-                "image":
-                    filepath,
-
-                "filename":
-                    unique_filename,
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name,
-
-                "confidence":
-                    confidence,
-
-                "confidence_status":
-                    confidence_status,
-
-                "top_predictions":
-                    top_predictions,
-
-                "plant":
-                    info.get(
-                        "plant",
-                        "Unknown"
-                    ),
-
-                "info":
-                    info,
-
-                "severity":
-                    severity_level,
-
-                "severity_level":
-                    severity_level,
-
-                "affected_area":
-                    affected_area,
-
-                "explanation":
-                    explanation,
-
-                "severity_advice":
-                    severity_advice,
-
-                "highlight":
-                    highlight_name,
-
-                "gradcam":
-                    gradcam_name
-
-            },
-
-            default=None,
-
-            function_name=
-                "PDF report"
-
-        )
-
-
-        report_name = normalize_filename(
-            report_result
-        )
-
-
-        print(
-            "PDF result:",
-            report_result
-        )
-
-
-        print(
-            "PDF filename:",
-            report_name
-        )
-
-
-    except Exception as e:
-
-        print(
-            "PDF generation failed:",
-            e
-        )
-
-        traceback.print_exc()
-
-
-    # ========================================================
-    # STEP 9 - SAVE HISTORY
-    # ========================================================
-
-    print()
-    print("-" * 70)
-    print("STEP 9: SAVE HISTORY")
-    print("-" * 70)
-
-
-    try:
-
-        save_prediction(
-
-            unique_filename,
-
-            info.get(
-                "plant",
-                "Unknown"
-            ),
-
-            disease_name,
+            info,
 
             confidence,
 
@@ -1526,7 +968,183 @@ def upload():
 
 
         print(
-            "History saved."
+            "AI explanation generated."
+        )
+
+
+    except Exception as e:
+
+        print(
+            "AI explanation error:",
+            e
+        )
+
+        traceback.print_exc()
+
+        explanation = ""
+
+
+    # ========================================================
+    # ========================================================
+    # PDF REPORT
+    # ========================================================
+    # ========================================================
+
+    report_name = None
+
+    report_path = None
+
+
+    print()
+    print(
+        "Generating PDF report..."
+    )
+
+
+    try:
+
+        report_name = make_output_filename(
+            filename,
+            "report"
+        )
+
+
+        # Change JPG extension to PDF
+
+        report_name = os.path.splitext(
+            report_name
+        )[0] + ".pdf"
+
+
+        report_path = os.path.join(
+
+            app.config["UPLOAD_FOLDER"],
+
+            report_name
+
+        )
+
+
+        # ----------------------------------------------------
+        # create_report writes directly to filename.
+        # It does not return a filename.
+        # ----------------------------------------------------
+
+        create_report(
+
+            report_path,
+
+            info.get(
+                "plant",
+                "Unknown"
+            ),
+
+            info.get(
+                "disease",
+                prediction
+            ),
+
+            confidence,
+
+            severity_level,
+
+            affected_area,
+
+            info.get(
+                "cause",
+                "Information not available"
+            ),
+
+            info.get(
+                "symptoms",
+                []
+            ),
+
+            info.get(
+                "treatment",
+                []
+            ),
+
+            info.get(
+                "organic_treatment",
+                []
+            ),
+
+            info.get(
+                "prevention",
+                []
+            )
+
+        )
+
+
+        if os.path.exists(
+            report_path
+        ):
+
+            print(
+                "✅ PDF report created:",
+                report_path
+            )
+
+        else:
+
+            print(
+                "⚠️ PDF report file was not created."
+            )
+
+            report_name = None
+
+            report_path = None
+
+
+    except Exception as e:
+
+        print(
+            "PDF generation error:",
+            e
+        )
+
+        traceback.print_exc()
+
+        report_name = None
+
+        report_path = None
+
+
+    # ========================================================
+    # ========================================================
+    # SAVE HISTORY
+    # ========================================================
+    # ========================================================
+
+    try:
+
+        save_prediction(
+
+            filename,
+
+            info.get(
+                "plant",
+                "Unknown"
+            ),
+
+            info.get(
+                "disease",
+                prediction
+            ),
+
+            confidence,
+
+            severity_level,
+
+            affected_area
+
+        )
+
+
+        print(
+            "✅ History saved."
         )
 
 
@@ -1541,45 +1159,25 @@ def upload():
 
 
     # ========================================================
-    # FINAL RESULT
+    # FINAL DEBUG INFORMATION
     # ========================================================
 
     print()
-    print("=" * 70)
-    print("🌱 PLANTAI RESULT")
-    print("=" * 70)
-
     print(
-        "Image:",
-        unique_filename
+        "=" * 70
     )
 
     print(
-        "Plant:",
-        info.get(
-            "plant",
-            "Unknown"
-        )
+        "FINAL PLANTAI RESULT"
     )
 
     print(
-        "Disease:",
-        disease_name
+        "=" * 70
     )
 
     print(
-        f"Confidence: "
-        f"{confidence:.2f}%"
-    )
-
-    print(
-        "Severity:",
-        severity_level
-    )
-
-    print(
-        "Affected area:",
-        affected_area
+        "Original:",
+        filename
     )
 
     print(
@@ -1588,20 +1186,42 @@ def upload():
     )
 
     print(
-        "Attention map:",
+        "Attention Map:",
         gradcam_name
     )
 
     print(
-        "PDF:",
+        "Prediction:",
+        prediction
+    )
+
+    print(
+        "Confidence:",
+        confidence
+    )
+
+    print(
+        "Severity:",
+        severity_level
+    )
+
+    print(
+        "Affected Area:",
+        affected_area
+    )
+
+    print(
+        "Report:",
         report_name
     )
 
-    print("=" * 70)
+    print(
+        "=" * 70
+    )
 
 
     # ========================================================
-    # RESULT TEMPLATE
+    # RESULT PAGE
     # ========================================================
 
     return render_template(
@@ -1612,18 +1232,18 @@ def upload():
         # Original image
         # ----------------------------------------------------
 
-        image=unique_filename,
+        image=filename,
 
 
         # ----------------------------------------------------
-        # AI highlight
+        # AI Highlight
         # ----------------------------------------------------
 
         highlight=highlight_name,
 
 
         # ----------------------------------------------------
-        # AI attention map
+        # AI Attention Map
         # ----------------------------------------------------
 
         gradcam=gradcam_name,
@@ -1635,18 +1255,6 @@ def upload():
 
         prediction=prediction,
 
-        plant=info.get(
-            "plant",
-            "Unknown"
-        ),
-
-        disease=disease_name,
-
-
-        # ----------------------------------------------------
-        # Confidence
-        # ----------------------------------------------------
-
         confidence=round(
             confidence,
             2
@@ -1654,11 +1262,6 @@ def upload():
 
         confidence_status=
             confidence_status,
-
-
-        # ----------------------------------------------------
-        # Top predictions
-        # ----------------------------------------------------
 
         top_predictions=
             top_predictions,
@@ -1668,11 +1271,9 @@ def upload():
         # Severity
         # ----------------------------------------------------
 
-        severity=
-            severity_level,
+        severity=severity_level,
 
-        affected_area=
-            affected_area,
+        affected_area=affected_area,
 
 
         # ----------------------------------------------------
@@ -1683,44 +1284,10 @@ def upload():
 
 
         # ----------------------------------------------------
-        # Individual fields
-        #
-        # These are useful if result.html uses direct
-        # variables instead of info["..."].
-        # ----------------------------------------------------
-
-        cause=info.get(
-            "cause",
-            ""
-        ),
-
-        symptoms=info.get(
-            "symptoms",
-            []
-        ),
-
-        treatment=info.get(
-            "treatment",
-            []
-        ),
-
-        organic_treatment=info.get(
-            "organic_treatment",
-            []
-        ),
-
-        prevention=info.get(
-            "prevention",
-            []
-        ),
-
-
-        # ----------------------------------------------------
         # AI explanation
         # ----------------------------------------------------
 
-        explanation=
-            explanation,
+        explanation=explanation,
 
 
         # ----------------------------------------------------
@@ -1732,11 +1299,10 @@ def upload():
 
 
         # ----------------------------------------------------
-        # PDF
+        # PDF report
         # ----------------------------------------------------
 
-        report=
-            report_name
+        report=report_name
 
     )
 
@@ -1753,48 +1319,40 @@ def api_predict():
 
     print()
     print("=" * 70)
-    print("🌱 PLANTAI MOBILE API")
+    print("🌱 PLANTAI MOBILE API REQUEST")
     print("=" * 70)
 
 
     # ========================================================
-    # CHECK FILE
+    # CHECK IMAGE
     # ========================================================
 
     if "image" not in request.files:
 
-        return {
+        return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "No image uploaded"
 
-        }, 400
+        }), 400
 
 
-    file = request.files[
-        "image"
-    ]
+    file = request.files["image"]
 
 
     if file.filename == "":
 
-        return {
+        return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "No file selected"
 
-        }, 400
+        }), 400
 
-
-    # ========================================================
-    # UNIQUE FILE
-    # ========================================================
 
     filename = secure_filename(
         file.filename
@@ -1803,45 +1361,28 @@ def api_predict():
 
     if not filename:
 
-        return {
+        return jsonify({
 
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "Invalid file name"
 
-        }, 400
+        }), 400
 
 
-    import uuid
-
-
-    extension = os.path.splitext(
-        filename
-    )[1].lower()
-
-
-    unique_filename = (
-        uuid.uuid4().hex
-        + extension
-    )
-
+    # ========================================================
+    # SAVE IMAGE
+    # ========================================================
 
     filepath = os.path.join(
 
-        app.config[
-            "UPLOAD_FOLDER"
-        ],
+        app.config["UPLOAD_FOLDER"],
 
-        unique_filename
+        filename
 
     )
 
-
-    # ========================================================
-    # SAVE
-    # ========================================================
 
     try:
 
@@ -1851,10 +1392,14 @@ def api_predict():
 
     except Exception as e:
 
-        return {
+        print(
+            "Image save error:",
+            e
+        )
 
-            "success":
-                False,
+        return jsonify({
+
+            "success": False,
 
             "error":
                 "Could not save image",
@@ -1862,7 +1407,7 @@ def api_predict():
             "details":
                 str(e)
 
-        }, 500
+        }), 500
 
 
     # ========================================================
@@ -1881,16 +1426,13 @@ def api_predict():
             filepath
         )
 
-
     except Exception as e:
 
         traceback.print_exc()
 
+        return jsonify({
 
-        return {
-
-            "success":
-                False,
+            "success": False,
 
             "error":
                 "AI prediction failed",
@@ -1898,11 +1440,11 @@ def api_predict():
             "details":
                 str(e)
 
-        }, 500
+        }), 500
 
 
     # ========================================================
-    # DATABASE
+    # DISEASE LOOKUP
     # ========================================================
 
     try:
@@ -1911,7 +1453,12 @@ def api_predict():
             prediction
         )
 
-    except Exception:
+    except Exception as e:
+
+        print(
+            "Disease lookup error:",
+            e
+        )
 
         info = None
 
@@ -1920,34 +1467,61 @@ def api_predict():
 
         info = {
 
-            "plant":
-                "Unknown",
+            "plant": "Unknown",
 
-            "disease":
-                prediction,
+            "disease": prediction,
 
             "cause":
                 "Information not available",
 
-            "symptoms":
-                [],
+            "symptoms": [],
 
-            "treatment":
-                [],
+            "treatment": [],
 
-            "organic_treatment":
-                [],
+            "organic_treatment": [],
 
-            "prevention":
-                []
+            "prevention": []
 
         }
 
 
-    disease_name = info.get(
-        "disease",
-        prediction
-    )
+    # ========================================================
+    # SEVERITY
+    # ========================================================
+
+    severity_level = "Unknown"
+
+    affected_area = 0
+
+
+    try:
+
+        severity_result = estimate_severity(
+            filepath
+        )
+
+
+        if isinstance(
+            severity_result,
+            dict
+        ):
+
+            severity_level = severity_result.get(
+                "level",
+                "Unknown"
+            )
+
+            affected_area = severity_result.get(
+                "area",
+                0
+            )
+
+    except Exception as e:
+
+        print(
+            "API severity error:",
+            e
+        )
 
 
     # ========================================================
@@ -1956,13 +1530,11 @@ def api_predict():
 
     if confidence < 40:
 
-        return {
+        return jsonify({
 
-            "success":
-                True,
+            "success": True,
 
-            "recognized":
-                False,
+            "recognized": False,
 
             "message":
                 "Plant could not be identified confidently.",
@@ -1977,7 +1549,10 @@ def api_predict():
                 ),
 
             "disease":
-                disease_name,
+                info.get(
+                    "disease",
+                    prediction
+                ),
 
             "confidence":
                 round(
@@ -1991,102 +1566,62 @@ def api_predict():
             "top_predictions":
                 top_predictions
 
-        }
+        })
 
 
     # ========================================================
-    # OPTIONAL AI FEATURES
+    # EXPLANATION
     # ========================================================
-
-    severity_level = (
-        "Not calculated"
-    )
-
-    affected_area = 0
-
 
     try:
 
-        severity_result = safe_call(
+        explanation = generate_explanation(
 
-            estimate_severity,
+            info,
 
-            {
+            confidence,
 
-                "image_path":
-                    filepath,
+            severity_level,
 
-                "filepath":
-                    filepath,
-
-                "image":
-                    filepath,
-
-                "prediction":
-                    prediction,
-
-                "disease":
-                    disease_name
-
-            },
-
-            default=None,
-
-            function_name=
-                "API severity"
+            affected_area
 
         )
 
+    except Exception as e:
 
-        if isinstance(
-            severity_result,
-            dict
-        ):
+        print(
+            "API explanation error:",
+            e
+        )
 
-            severity_level = (
-                severity_result.get(
-                    "severity",
-                    severity_result.get(
-                        "level",
-                        "Not calculated"
-                    )
-                )
-            )
+        explanation = ""
 
-            affected_area = (
-                severity_result.get(
-                    "affected_area",
-                    severity_result.get(
-                        "area",
-                        0
-                    )
-                )
-            )
 
-        elif isinstance(
-            severity_result,
-            (tuple, list)
-        ):
+    # ========================================================
+    # SEVERITY ADVICE
+    # ========================================================
 
-            if len(
-                severity_result
-            ) >= 1:
+    try:
 
-                severity_level = (
-                    severity_result[0]
-                )
+        severity_advice = get_severity_advice(
+            severity_level
+        )
 
-            if len(
-                severity_result
-            ) >= 2:
+    except Exception as e:
 
-                affected_area = (
-                    severity_result[1]
-                )
+        print(
+            "API severity advice error:",
+            e
+        )
 
-    except Exception:
+        severity_advice = {
 
-        pass
+            "message":
+                "Unable to determine severity advice.",
+
+            "actions": []
+
+        }
 
 
     # ========================================================
@@ -2097,14 +1632,17 @@ def api_predict():
 
         save_prediction(
 
-            unique_filename,
+            filename,
 
             info.get(
                 "plant",
                 "Unknown"
             ),
 
-            disease_name,
+            info.get(
+                "disease",
+                prediction
+            ),
 
             confidence,
 
@@ -2126,16 +1664,14 @@ def api_predict():
     # API RESPONSE
     # ========================================================
 
-    return {
+    response = {
 
-        "success":
-            True,
+        "success": True,
 
-        "recognized":
-            True,
+        "recognized": True,
 
         "image":
-            unique_filename,
+            filename,
 
         "prediction":
             prediction,
@@ -2147,7 +1683,10 @@ def api_predict():
             ),
 
         "disease":
-            disease_name,
+            info.get(
+                "disease",
+                prediction
+            ),
 
         "confidence":
             round(
@@ -2194,10 +1733,30 @@ def api_predict():
                 []
             ),
 
+        "explanation":
+            explanation,
+
+        "severity_advice":
+            severity_advice,
+
         "top_predictions":
             top_predictions
 
     }
+
+
+    print(
+        "Mobile API response prepared."
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    return jsonify(
+        response
+    )
 
 
 # ============================================================
@@ -2241,7 +1800,7 @@ def history():
 
 
 # ============================================================
-# UPLOADED FILES
+# SERVE GENERATED / UPLOADED FILES
 # ============================================================
 
 @app.route(
@@ -2253,9 +1812,7 @@ def uploaded_file(
 
     return send_from_directory(
 
-        app.config[
-            "UPLOAD_FOLDER"
-        ],
+        app.config["UPLOAD_FOLDER"],
 
         filename
 
@@ -2269,28 +1826,28 @@ def uploaded_file(
 @app.route("/health")
 def health():
 
-    return {
+    return jsonify({
 
-        "status":
-            "ok",
+        "status": "ok",
 
-        "service":
-            "PlantAI"
+        "service": "PlantAI"
 
-    }
+    })
 
 
 # ============================================================
-# RUN LOCALLY
+# RUN APPLICATION
 # ============================================================
 
 if __name__ == "__main__":
 
     port = int(
+
         os.environ.get(
             "PORT",
             5000
         )
+
     )
 
 
