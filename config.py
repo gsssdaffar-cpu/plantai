@@ -23,7 +23,7 @@ BATCH_SIZE = 16
 
 # Start with 3 for testing.
 # After confirming everything works, use 15-30.
-EPOCHS = 10
+EPOCHS = 20
 
 # Learning rate for fine-tuning pretrained EfficientNet
 LEARNING_RATE = 0.0001

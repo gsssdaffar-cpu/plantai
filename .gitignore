@@ -24,3 +24,11 @@ tomato.jpeg
 models/plant_model.pth
 models/plant_model_15class_backup.pth
 models/plant_model_38class_old.pth
+uploads/
+real_test/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.csv
+*.json
