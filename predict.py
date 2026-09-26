@@ -1,6 +1,6 @@
-﻿# ============================================================
+# ============================================================
 # PLANTAI
-# V2 PRODUCTION PREDICTION ENGINE
+# V3 PRODUCTION PREDICTION ENGINE
 # 38-CLASS PLANTVILLAGE DISEASE DETECTION
 # ============================================================
 
@@ -48,7 +48,7 @@ BASE_DIR = os.path.dirname(
 MODEL_PATH = os.path.join(
     BASE_DIR,
     "models",
-    "plant_model_38class_V2.pth"
+    "plant_model_38class_V3.pth"
 )
 
 CLASS_NAMES_PATH = os.path.join(
@@ -70,7 +70,7 @@ TTA_THRESHOLD = 60.0
 
 print()
 print("============================================================")
-print("Loading PlantAI V2 model...")
+print("Loading PlantAI V3 model...")
 print("============================================================")
 print("Device:", DEVICE)
 print("Model:", MODEL_PATH)
@@ -81,13 +81,13 @@ print("============================================================")
 
 
 # ============================================================
-# LOAD V2 CLASS NAMES
+# LOAD V3 CLASS NAMES
 # ============================================================
 
 if not os.path.exists(CLASS_NAMES_PATH):
 
     raise FileNotFoundError(
-        "\nPlantAI V2 class file not found:\n"
+        "\nPlantAI V3 class file not found:\n"
         f"{CLASS_NAMES_PATH}\n"
     )
 
@@ -123,7 +123,7 @@ if not isinstance(CLASS_NAMES, list):
 if len(CLASS_NAMES) != 38:
 
     raise ValueError(
-        "PlantAI V2 requires exactly 38 classes.\n"
+        "PlantAI V3 requires exactly 38 classes.\n"
         f"Found: {len(CLASS_NAMES)}"
     )
 
@@ -138,7 +138,7 @@ print("Classes:", NUM_CLASSES)
 # ============================================================
 
 print()
-print("V2 CLASS NAMES")
+print("V3 CLASS NAMES")
 print("------------------------------------------------------------")
 
 for index, class_name in enumerate(CLASS_NAMES):
@@ -199,13 +199,13 @@ if not os.path.exists(MODEL_PATH):
 
     raise FileNotFoundError(
 
-        "\nPlantAI V2 model not found:\n"
+        "\nPlantAI V3 model not found:\n"
 
         f"{MODEL_PATH}\n\n"
 
         "Expected file:\n"
 
-        "models\\plant_model_38class_V2.pth"
+        "models\\plant_model_38class_V3.pth"
     )
 
 
@@ -413,7 +413,7 @@ for parameter in model.parameters():
 
 print()
 print("============================================================")
-print("PlantAI V2 model loaded successfully.")
+print("PlantAI V3 model loaded successfully.")
 print("============================================================")
 print("Device:", DEVICE)
 print("Classes:", NUM_CLASSES)
@@ -1265,7 +1265,7 @@ if __name__ == "__main__":
 
         print()
         print("============================================================")
-        print("                  PLANTAI V2 PREDICTION")
+        print("                  PLANTAI V3 PREDICTION")
         print("============================================================")
 
         print(
@@ -1346,3 +1346,4 @@ if __name__ == "__main__":
         print()
 
         raise
+

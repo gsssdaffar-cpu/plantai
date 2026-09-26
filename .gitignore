@@ -1,34 +1,61 @@
+﻿# Python
 .venv/
 __pycache__/
 *.pyc
 
+# Datasets
 PlantVillage_Source/
-
 dataset/
 dataset_backup_15class/
 dataset_global/
+real_test/
 
+# User-generated data
 uploads/
 reports/
 
+# Databases
 *.db
 *.sqlite
 *.sqlite3
 
-tomato.jpeg
-
+# Local development
 .vscode/
 .idea/
-
 *.pyproj
-models/plant_model.pth
-models/plant_model_15class_backup.pth
-models/plant_model_38class_old.pth
-uploads/
-real_test/
+
+# Test images/data
 *.jpg
 *.jpeg
 *.png
 *.webp
 *.csv
-*.json
+
+# PyInstaller
+build/
+dist/
+
+# PlantAI installer/build staging
+installer_build/
+installer_output/
+PlantAI-working-backup/
+
+# Inno Setup
+PlantAI.iss
+
+# ML model artifacts
+models/plant_model.pth
+models/plant_model_15class_backup.pth
+models/plant_model_38class_old.pth
+models/plant_model_38class_V3.pth
+models/plant_model_38class_V3_candidate.pth
+models/production_backups/
+
+# Training / evaluation artifacts
+learning/
+
+# Local backup
+current_staged_changes_backup.patch
+
+# Temporary/local files
+tomato.jpeg
